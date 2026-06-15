@@ -1,5 +1,16 @@
+# SoEx.Workflow
+
+This repository demonstrates decoupling business logic from workflow tooling. Validated against 
+Temporal, Elsa, Durable Task, Restate, and Camunda 8. It also provides a ready to use 
+IWorkflowUtility for use within IDesign Method based Architectures.
+
+PII protection using crypto-shreading is enforced by this tooling to try and prevent 
+recovery of PII from the workflow journals.
+
+For the time being the best place to start would be running the examples and poking them.
+
 > [!IMPORTANT]
-> This file was LLM generated and is pending editing by the project maintainer.
+> Below this line was LLM generated and is pending editing by the project maintainer.
 
 # SoEx-Workflow
 
