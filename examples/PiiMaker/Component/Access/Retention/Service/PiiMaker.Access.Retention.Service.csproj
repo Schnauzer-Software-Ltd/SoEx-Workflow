@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Retention.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Retention.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Retention access-component IMPLEMENTATION, in its own assembly. Depends only on its contract. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Access.Retention.Interface.csproj" />
+  </ItemGroup>
+
+</Project>

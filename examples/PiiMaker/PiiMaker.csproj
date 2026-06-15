@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker</RootNamespace>
+    <AssemblyName>PiiMaker</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The example "method": a SoEx Method is the aggregate of its components, each of which lives in its OWN
+       interface + service assembly (the SoEx component-per-assembly convention, named
+       <Company>.<Tier>.<Component>.{Interface,Service}). This project compiles no source of its own — it is
+       the façade that references every component assembly, so a host referencing PiiMaker gets the whole
+       method (contracts + implementations) transitively. The AspNetCore method generator lifts the
+       Manager.Membership.Interface contracts; the SoEx.* abstraction packages flow in transitively. -->
+  <ItemGroup>
+    <ProjectReference Include="Component\Access\Billing\Interface\PiiMaker.Access.Billing.Interface.csproj" />
+    <ProjectReference Include="Component\Access\Billing\Service\PiiMaker.Access.Billing.Service.csproj" />
+    <ProjectReference Include="Component\Access\Identity\Interface\PiiMaker.Access.Identity.Interface.csproj" />
+    <ProjectReference Include="Component\Access\Identity\Service\PiiMaker.Access.Identity.Service.csproj" />
+    <ProjectReference Include="Component\Access\Provisioning\Interface\PiiMaker.Access.Provisioning.Interface.csproj" />
+    <ProjectReference Include="Component\Access\Provisioning\Service\PiiMaker.Access.Provisioning.Service.csproj" />
+    <ProjectReference Include="Component\Access\Retention\Interface\PiiMaker.Access.Retention.Interface.csproj" />
+    <ProjectReference Include="Component\Access\Retention\Service\PiiMaker.Access.Retention.Service.csproj" />
+    <ProjectReference Include="Component\Engine\Subscription\Interface\PiiMaker.Engine.Subscription.Interface.csproj" />
+    <ProjectReference Include="Component\Engine\Subscription\Service\PiiMaker.Engine.Subscription.Service.csproj" />
+    <ProjectReference Include="Component\Manager\Membership\Interface\PiiMaker.Manager.Membership.Interface.csproj" />
+    <ProjectReference Include="Component\Manager\Membership\Service\PiiMaker.Manager.Membership.Service.csproj" />
+    <!-- The Workflow utility now ships as product packages; the example consumes them (in-repo → project refs). -->
+    <ProjectReference Include="..\..\src\SoEx.Method.Workflow.Abstractions\SoEx.Method.Workflow.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Method.Workflow\SoEx.Method.Workflow.csproj" />
+  </ItemGroup>
+
+  <!-- The component folders, the iFx assembly, and the Hosts are all their own projects (siblings under this
+       method); this façade compiles none of their source. -->
+  <ItemGroup>
+    <Compile Remove="Component\**\*.cs" />
+    <Compile Remove="iFx\**\*.cs" />
+    <Compile Remove="Hosts\**\*.cs" />
+  </ItemGroup>
+
+</Project>

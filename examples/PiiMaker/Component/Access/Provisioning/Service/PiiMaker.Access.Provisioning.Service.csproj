@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Provisioning.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Provisioning.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Provisioning access-component IMPLEMENTATION, in its own assembly. Depends only on its contract. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Access.Provisioning.Interface.csproj" />
+  </ItemGroup>
+
+</Project>

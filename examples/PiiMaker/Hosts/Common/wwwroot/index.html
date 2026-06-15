@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PiiMaker — workflow control panel</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a212b; --panel2: #222c38; --line: #2c3845;
+      --ink: #e6edf3; --muted: #8b98a5; --accent: #4f9cf9; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background: var(--bg); color: var(--ink); }
+    header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+             padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 12px; }
+    header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    select, input, button { font: inherit; color: var(--ink); }
+    select, input { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+    input { width: 100%; }
+    button { background: var(--accent); border: 0; border-radius: 6px; color: #04121f; font-weight: 600;
+             padding: 7px 12px; cursor: pointer; }
+    button.ghost { background: var(--panel2); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    a#dash { text-decoration: none; background: var(--panel2); color: var(--ink); border: 1px solid var(--line);
+             border-radius: 6px; padding: 7px 12px; font-weight: 500; white-space: nowrap; }
+    a#dash:hover { border-color: var(--accent); color: var(--accent); }
+    a#dash[hidden] { display: none; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--bad); }
+    .dot.up { background: var(--good); }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+    .card h2 { font-size: 13px; margin: 0 0 2px; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+    .card .desc { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .card .flow { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 0 0 12px;
+                  border-left: 3px solid var(--line); padding-left: 10px; }
+    .card .flow b { color: var(--ink); font-weight: 600; }
+    /* a button name, as it appears on the card */
+    .card .flow .key { color: var(--ink); font-weight: 600; background: var(--panel2); border: 1px solid var(--line);
+                       border-radius: 4px; padding: 1px 5px; font-size: 11px; white-space: nowrap; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .row label { flex: 0 0 70px; color: var(--muted); align-self: center; font-size: 12px; }
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    input:disabled { opacity: .5; }
+    /* A card the selected host can't drive stays visible but dimmed, with an inline explanation. */
+    .card.disabled h2 { color: var(--muted); }
+    .card.disabled .desc, .card.disabled .row, .card.disabled .btns { opacity: .45; }
+    .cap-note { display: none; margin-top: 10px; font-size: 12px; color: var(--warn);
+                background: rgba(210, 153, 34, .10); border-left: 3px solid var(--warn);
+                border-radius: 4px; padding: 8px 10px; }
+    .card.show-note .cap-note { display: block; }
+    aside { position: sticky; top: 16px; display: grid; gap: 16px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+    .panel h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .inst { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .inst:last-child { border-bottom: 0; }
+    .inst code { color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag { font-size: 11px; padding: 2px 7px; border-radius: 20px; font-weight: 600; }
+    .tag.run { background: rgba(210,153,34,.18); color: var(--warn); }
+    .tag.done { background: rgba(63,185,80,.18); color: var(--good); }
+    #log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; max-height: 280px;
+           overflow: auto; white-space: pre-wrap; color: var(--muted); }
+    #log .ok { color: var(--good); } #log .err { color: var(--bad); }
+    .empty { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>PiiMaker · workflow control panel</h1>
+      <div class="sub">Fire the events the durable workflow waits for. Each button is one external trigger.</div>
+    </div>
+    <div class="right">
+      <span class="dot" id="health"></span>
+      <span id="runtime" class="sub">—</span>
+      <a id="dash" target="_blank" rel="noopener" hidden>dashboard ↗</a>
+      <select id="host">
+        <option value="http://localhost:5001">InProc · :5001</option>
+        <option value="http://localhost:5002">Temporal · :5002</option>
+        <option value="http://localhost:5003">DurableTask · :5003</option>
+        <option value="http://localhost:5004">Restate · :5004</option>
+        <option value="http://localhost:5005">Elsa · :5005</option>
+      </select>
+    </div>
+  </header>
+
+  <main>
+    <div class="cards">
+      <!-- A: Onboarding -->
+      <section class="card" data-cap="onboarding">
+        <h2>A · Onboarding</h2>
+        <div class="desc">Start, then deliver the events the saga waits on (IDP & invitee callbacks).</div>
+        <div class="flow"><span class="key">Start onboarding</span> → look up the user, create the account, then
+          wait. <span class="key">Account verified</span> → reserve a seat, send the invite, then wait.
+          <span class="key">Invite accepted</span> → assign the seat, complete &amp; <b>shred the key</b>. (If a wait
+          times out the saga compensates — release the seat / abandon.)</div>
+        <div class="row"><label>Org</label><input id="on-org" value="org-acme" /></div>
+        <div class="row"><label>Email</label><input id="on-email" value="invitee@example.com" /></div>
+        <div class="row"><label>Offer</label><input id="on-offer" value="team-annual" /></div>
+        <div class="btns">
+          <button data-act="startOnboarding">Start onboarding</button>
+          <button class="ghost" data-act="accountVerified">Account verified</button>
+          <button class="ghost" data-act="inviteAccepted">Invite accepted</button>
+        </div>
+      </section>
+
+      <!-- B: Subscription -->
+      <section class="card" data-cap="renewal">
+        <h2>B · Subscription renewal</h2>
+        <div class="desc">Force a decline to drive the dunning wait, then "fix the card" with a payment update.</div>
+        <div class="flow"><span class="key">Force decline (period 1)</span> first so the charge fails (optional).
+          <span class="key">Start renewal</span> → charge the period; on success, invoice and <b>continue-as-new</b>
+          into the next period (up to 3) then complete; on a decline, enter dunning and wait.
+          <span class="key">Payment updated</span> → retry the charge and carry on. After the max attempts it cancels.</div>
+        <div class="row"><label>Subscriber</label><input id="sub-id" value="member@example.com" /></div>
+        <div class="btns">
+          <button class="ghost" data-act="forceDecline">Force decline (period 1)</button>
+          <button class="ghost" data-act="clearDecline">Clear decline</button>
+        </div>
+        <div class="btns">
+          <button data-act="startRenewal">Start renewal</button>
+          <button class="ghost" data-act="paymentUpdated">Payment updated</button>
+        </div>
+        <div class="desc" style="margin-top:8px">Charge attempts (period 1): <b id="sub-attempts">—</b></div>
+        <div class="cap-note">Not wired on this host — its runtime/mode doesn't drive subscription renewal.
+          Exercise it on the InProc, Temporal or DurableTask host.</div>
+      </section>
+
+      <!-- C: Offboarding -->
+      <section class="card" data-cap="offboarding">
+        <h2>C · Offboarding</h2>
+        <div class="desc">Native fan-out: one governed revocation per downstream system, in parallel.</div>
+        <div class="flow"><span class="key">Start offboarding</span> → fan out in parallel, one governed revocation
+          per downstream system (mail, VPN, billing portal, wiki), then archive the must-retain record and
+          <b>shred the key</b>. No further buttons — the fan-out completes on its own.</div>
+        <div class="row"><label>Subject</label><input id="off-id" value="leaver@example.com" /></div>
+        <div class="btns"><button data-act="startOffboarding">Start offboarding</button></div>
+        <div class="cap-note">Offboarding is a native parallel fan-out, so it needs a runtime that can fan out.
+          Not available on the portable InProc shell or the onboarding-only Elsa host — try Temporal,
+          DurableTask or Restate.</div>
+      </section>
+
+      <!-- D: Erasure -->
+      <section class="card" data-cap="always">
+        <h2>D · Right to erasure</h2>
+        <div class="desc">Sweep every in-flight instance for a subject — crypto-shred keys, retain the carve-out.</div>
+        <div class="flow"><span class="key">Forget subject</span> → find every in-flight instance still indexed for
+          the subject, run each one's terminal, <b>crypto-shred</b> its per-instance key (its journal becomes
+          unrecoverable), prune the subject index, and write the must-retain carve-out outward. Run a couple of
+          flows first so there's something to erase.</div>
+        <div class="row"><label>Subject</label><input id="er-id" value="invitee@example.com" /></div>
+        <div class="btns"><button data-act="erase">Forget subject</button></div>
+      </section>
+
+      <!-- Durability (Elsa restart) -->
+      <section class="card" data-cap="restart">
+        <h2>Durability</h2>
+        <div class="desc">Restart the host mid-flow (over the same persistent store), then resume — the saga
+          survives the process going away.</div>
+        <div class="flow">Onboarding's <span class="key">Start onboarding</span> parks the saga on the
+          invite-accepted bookmark (persisted to SQLite) → <span class="key">Restart host</span> disposes the
+          process and rebuilds a fresh one over the same database → Onboarding's <span class="key">Invite
+          accepted</span> → it resumes on the new process and completes. Durable state outlives the process.</div>
+        <div class="btns"><button class="ghost" data-act="restart">Restart host</button></div>
+        <div class="cap-note">Interactive host-restart durability is specific to the Elsa host (it persists to
+          SQLite and resumes on a fresh process). Other runtimes hold durable state in their server or scheduler.</div>
+      </section>
+    </div>
+
+    <aside>
+      <div class="panel">
+        <h2>Instances</h2>
+        <div id="instances"><div class="empty">No instances yet — start a flow.</div></div>
+      </div>
+      <div class="panel">
+        <h2>Activity</h2>
+        <div id="log"></div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

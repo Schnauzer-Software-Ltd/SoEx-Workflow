@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Billing.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Billing.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Billing access-component IMPLEMENTATION, in its own assembly. Depends only on its contract; the
+       host composes it behind the in-proc transport. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Access.Billing.Interface.csproj" />
+  </ItemGroup>
+
+</Project>

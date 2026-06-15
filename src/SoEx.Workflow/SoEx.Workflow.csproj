@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Workflow</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A workflow runtime is a SoEx binding/transport: it references only the abstraction
+       packages a transport needs (matching SoEx.Transport.InProc), never SoEx.Hosting.
+       Hosting is the consumer's composition root, where the binding is fed into HostExtensions.SoEx. -->
+  <ItemGroup>
+    <PackageReference Include="SoEx.Abstractions" />
+    <PackageReference Include="SoEx.Topology" />
+    <PackageReference Include="SoEx.Context" />
+    <PackageReference Include="SoEx.Endpoint" />
+  </ItemGroup>
+
+</Project>

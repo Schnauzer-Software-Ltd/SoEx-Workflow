@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PiiMaker.Host.Restate</RootNamespace>
+    <AssemblyName>PiiMaker.Host.Restate</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The cross-language host. restate-server runs the durable flow; the compiled Restate sidecar
+       (restate-sidecar-rs, in the adapter) calls back to a .NET step host over HTTP. The adapter reference
+       brings RestateWorkflowHost (the portable /step+/terminate callback) and the ASP.NET framework the
+       consumer-authored native /gov-step host also needs. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
+    <ProjectReference Include="..\..\PiiMaker.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Restate\SoEx.Workflow.Restate.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- The static control-panel UI lives once in Shared/wwwroot; copy it into this host's output wwwroot. -->
+  <Target Name="CopyControlPanelUi" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <ControlPanelUi Include="..\Common\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ControlPanelUi)"
+          DestinationFiles="@(ControlPanelUi->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Absolute path to the example's OWN Restate sidecar source (sidecar-rs/, separate from the library/test
+       sidecar), so the host can build (cargo) / spawn the binary regardless of the working directory. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RestateSidecarRsDir</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/sidecar-rs'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

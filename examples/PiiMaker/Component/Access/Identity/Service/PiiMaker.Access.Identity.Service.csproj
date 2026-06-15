@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Identity.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Identity.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Identity access-component IMPLEMENTATION, in its own assembly. Depends only on its contract. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Access.Identity.Interface.csproj" />
+  </ItemGroup>
+
+</Project>

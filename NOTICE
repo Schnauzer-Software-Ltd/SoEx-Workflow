@@ -1,0 +1,4 @@
+This repository contains AI-generated code and documentation (Anthropic Claude).
+
+It is separate from the human-authored SoEx core libraries and must not be
+upstreamed into them. Integration with SoEx is via its published packages only.

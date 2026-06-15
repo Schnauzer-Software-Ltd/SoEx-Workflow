@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>MultiManagerDemo</RootNamespace>
+    <AssemblyName>MultiManagerDemo</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Just the workflow utility and its core; this demo composes two managers on one utility by hand,
+       without the SoEx host ceremony, to keep the focus on multi-manager erasure routing. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Method.Workflow\SoEx.Method.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

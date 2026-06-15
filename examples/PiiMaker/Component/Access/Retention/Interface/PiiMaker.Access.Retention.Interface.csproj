@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Retention.Interface</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Retention.Interface</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Retention access-component CONTRACT, in its own assembly (<Company>.<Tier>.<Component>.Interface) —
+       the component-per-assembly convention. A plain contract: no SoEx dependency. The service implements it
+       in PiiMaker.Access.Retention.Service. -->
+
+</Project>

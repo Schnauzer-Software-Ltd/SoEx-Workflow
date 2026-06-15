@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Engine.Subscription.Interface</RootNamespace>
+    <AssemblyName>PiiMaker.Engine.Subscription.Interface</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Subscription engine-component CONTRACT, in its own assembly (<Company>.<Tier>.<Component>.Interface) —
+       the component-per-assembly convention. A plain contract: no SoEx dependency. The service implements it
+       in PiiMaker.Engine.Subscription.Service. -->
+
+</Project>

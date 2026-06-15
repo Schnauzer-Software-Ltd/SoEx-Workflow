@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Idempotency.RavenDB</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Idempotency.RavenDB</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A durable, shared IIdempotencyStore over RavenDB compare-exchange: an effect keyed on an
+       IdempotencyKey runs exactly once across processes (claim-first compare-exchange), and a redelivery
+       returns the recorded result without re-running. The durable analogue of InMemoryIdempotencyStore;
+       RavenDB (the clustered component) is the single source of truth, so the once-guarantee holds
+       cross-process and across a restart. Also backs the Elsa gateway's idempotent re-raise. -->
+  <ItemGroup>
+    <PackageReference Include="RavenDB.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

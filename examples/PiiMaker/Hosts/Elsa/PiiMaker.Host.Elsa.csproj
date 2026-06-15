@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PiiMaker.Host.Elsa</RootNamespace>
+    <AssemblyName>PiiMaker.Host.Elsa</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A native-flow host: the shared composition stands up the real membership system; this host authors
+       the durable Elsa flow over it. The Elsa adapter reference brings Elsa itself. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
+    <ProjectReference Include="..\..\PiiMaker.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Elsa\SoEx.Workflow.Elsa.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- durable persistence: a registered Elsa workflow's position survives a host restart via SQLite -->
+    <PackageReference Include="Elsa.Persistence.EFCore" />
+    <PackageReference Include="Elsa.Persistence.EFCore.Sqlite" />
+  </ItemGroup>
+
+  <!-- The static control-panel UI lives once in Shared/wwwroot; copy it into this host's output wwwroot. -->
+  <Target Name="CopyControlPanelUi" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <ControlPanelUi Include="..\Common\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ControlPanelUi)"
+          DestinationFiles="@(ControlPanelUi->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

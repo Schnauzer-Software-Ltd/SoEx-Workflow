@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Maintenance.EfCore</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Maintenance.EfCore</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Durable erasure-maintenance state over EF Core: the held-instance log and the open erasure-request log
+       as two relational tables. Provider-agnostic — the consumer supplies the database provider via the
+       DbContextOptions — so the maintenance state lives wherever the deployment already runs a database and is
+       shared cross-process for a separately-hosted scheduler. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+    <!-- The bundled ErasureStores backs the subject index from the same database as the maintenance logs, so it
+         composes the EF Core subject-index store and reuses its model mapping. Maintenance depends on the index
+         (it operates on the indexed instances), so the dependency direction is correct. -->
+    <ProjectReference Include="../SoEx.Workflow.SubjectIndex.EfCore/SoEx.Workflow.SubjectIndex.EfCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

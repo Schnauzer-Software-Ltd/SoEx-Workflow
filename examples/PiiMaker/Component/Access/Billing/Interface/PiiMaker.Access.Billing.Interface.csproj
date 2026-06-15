@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Billing.Interface</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Billing.Interface</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Billing access-component CONTRACT, in its own assembly named for the namespace it holds
+       (<Company>.<Tier>.<Component>.Interface) — the same component-per-assembly convention as
+       PiiMaker.Manager.Membership.Interface. A plain contract: no SoEx dependency. The service implements it
+       in PiiMaker.Access.Billing.Service; callers depend on this assembly, not the implementation. -->
+
+</Project>

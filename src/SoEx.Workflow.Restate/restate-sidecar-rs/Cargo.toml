@@ -1,0 +1,26 @@
+[package]
+name = "restate-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "SoEx.Workflow Restate sidecar (Rust) — drives the unchanged .NET Manager over HTTP."
+
+[[bin]]
+name = "restate-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+restate-sdk = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+serde = { version = "1", features = ["derive"] }
+# Callbacks to the .NET step host. Plain HTTP by default (loopback); the rustls backend lets STEP_URL be
+# https (with STEP_CA_CERT to pin a private CA) when the hop crosses a network. See build_client().
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+serde_json = "1"
+# Mock HTTP server for the call_step/call_terminate integration tests (real socket + reqwest + auth header).
+wiremock = "0.6"
+
+[profile.release]
+opt-level = 2

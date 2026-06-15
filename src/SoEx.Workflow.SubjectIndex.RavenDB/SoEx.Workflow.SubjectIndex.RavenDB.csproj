@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.SubjectIndex.RavenDB</RootNamespace>
+    <AssemblyName>SoEx.Workflow.SubjectIndex.RavenDB</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A durable, shared ISubjectIndex over RavenDB: the subject→instance map erasure routing needs, held as
+       two bidirectional documents per edge set (subject doc + instance doc) so reads are strongly-consistent
+       point loads and edges survive a restart / are visible cross-process. RavenDB is the single source of
+       truth, so a subject-erasure request on any node finds every instance touching the subject. -->
+  <ItemGroup>
+    <PackageReference Include="RavenDB.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

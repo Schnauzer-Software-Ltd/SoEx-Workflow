@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Manager.Membership.Interface</RootNamespace>
+    <AssemblyName>PiiMaker.Manager.Membership.Interface</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Membership method's CONTRACT, in its own assembly named for the namespace it holds
+       (<Company>.Manager.<Component>.Interface). The SoEx.Method.Generators.AspNetCore source generator
+       discovers interface assemblies by this name convention and lifts the interfaces here — the manager
+       contract and the inbound-trigger seam — into POST controllers, deriving the polymorphic command
+       discriminators from the command hierarchies in this assembly. The implementation and the rest of the
+       method live in PiiMaker, which references this. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SoEx.Abstractions" />
+  </ItemGroup>
+
+</Project>

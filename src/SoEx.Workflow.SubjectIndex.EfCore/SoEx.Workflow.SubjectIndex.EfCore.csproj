@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.SubjectIndex.EfCore</RootNamespace>
+    <AssemblyName>SoEx.Workflow.SubjectIndex.EfCore</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A durable, shared ISubjectIndex over EF Core: the subject→instance map as a relational edge table
+       ((SubjectId, InstanceId) composite key, indexed on InstanceId for termination pruning). Provider-agnostic
+       — the consumer supplies the DB provider (SQL Server / PostgreSQL / SQLite) via the DbContextOptions —
+       so the same store works on whatever relational database the deployment already runs. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

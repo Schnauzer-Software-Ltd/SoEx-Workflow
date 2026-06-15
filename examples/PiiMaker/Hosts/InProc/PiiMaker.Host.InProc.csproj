@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PiiMaker.Host.InProc</RootNamespace>
+    <AssemblyName>PiiMaker.Host.InProc</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The shared composition stands up the real membership system + the web control panel; this host wires
+       the portable flow onto the InProc runtime and serves the UI. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
+    <ProjectReference Include="..\..\PiiMaker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- The static control-panel UI lives once in Shared/wwwroot; copy it into this host's output wwwroot. -->
+  <Target Name="CopyControlPanelUi" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <ControlPanelUi Include="..\Common\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ControlPanelUi)"
+          DestinationFiles="@(ControlPanelUi->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

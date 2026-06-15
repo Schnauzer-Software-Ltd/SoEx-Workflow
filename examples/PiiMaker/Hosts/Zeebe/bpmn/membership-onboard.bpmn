@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_membership_onboard"
+                  targetNamespace="http://camunda.org/examples">
+
+  <!-- Onboarding authored as a BPMN graph: the broker owns the flow; each service task is a governed step
+       (job type soex-onboard-step, its kind + sequence carried as static task headers), the acceptance wait
+       is a message-catch correlated on the logical instance id, and a process-level end execution listener
+       runs the crypto-shred terminal. The only payload the journal sees is the sealed seed (ciphertext). -->
+  <bpmn:message id="Message_accepted" name="invite-accepted">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=instanceId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+
+  <bpmn:process id="membership-onboard" name="Membership onboarding" isExecutable="true">
+    <bpmn:extensionElements>
+      <zeebe:executionListeners>
+        <zeebe:executionListener eventType="end" type="soex-terminal" retries="3" />
+      </zeebe:executionListeners>
+    </bpmn:extensionElements>
+
+    <bpmn:startEvent id="StartEvent_1" name="Onboard requested">
+      <bpmn:outgoing>Flow_start_lookup</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="Task_Lookup" name="Look up user">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="soex-onboard-step" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="kind" value="lookup" />
+          <zeebe:header key="seq" value="0" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_start_lookup</bpmn:incoming>
+      <bpmn:outgoing>Flow_lookup_create</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_Create" name="Create account">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="soex-onboard-step" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="kind" value="create" />
+          <zeebe:header key="seq" value="1" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_lookup_create</bpmn:incoming>
+      <bpmn:outgoing>Flow_create_reserve</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_Reserve" name="Reserve subscription">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="soex-onboard-step" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="kind" value="reserve" />
+          <zeebe:header key="seq" value="2" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_create_reserve</bpmn:incoming>
+      <bpmn:outgoing>Flow_reserve_invite</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_Invite" name="Send invite">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="soex-onboard-step" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="kind" value="invite" />
+          <zeebe:header key="seq" value="3" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_reserve_invite</bpmn:incoming>
+      <bpmn:outgoing>Flow_invite_accept</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:intermediateCatchEvent id="Event_Accept" name="Invite accepted">
+      <bpmn:incoming>Flow_invite_accept</bpmn:incoming>
+      <bpmn:outgoing>Flow_accept_assign</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MsgDef_accept" messageRef="Message_accepted" />
+    </bpmn:intermediateCatchEvent>
+
+    <bpmn:serviceTask id="Task_Assign" name="Assign subscription">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="soex-onboard-step" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="kind" value="assign" />
+          <zeebe:header key="seq" value="4" />
+        </zeebe:taskHeaders>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_accept_assign</bpmn:incoming>
+      <bpmn:outgoing>Flow_assign_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="EndEvent_1" name="Onboarded">
+      <bpmn:incoming>Flow_assign_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_start_lookup" sourceRef="StartEvent_1" targetRef="Task_Lookup" />
+    <bpmn:sequenceFlow id="Flow_lookup_create" sourceRef="Task_Lookup" targetRef="Task_Create" />
+    <bpmn:sequenceFlow id="Flow_create_reserve" sourceRef="Task_Create" targetRef="Task_Reserve" />
+    <bpmn:sequenceFlow id="Flow_reserve_invite" sourceRef="Task_Reserve" targetRef="Task_Invite" />
+    <bpmn:sequenceFlow id="Flow_invite_accept" sourceRef="Task_Invite" targetRef="Event_Accept" />
+    <bpmn:sequenceFlow id="Flow_accept_assign" sourceRef="Event_Accept" targetRef="Task_Assign" />
+    <bpmn:sequenceFlow id="Flow_assign_end" sourceRef="Task_Assign" targetRef="EndEvent_1" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="membership-onboard">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="160" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="146" y="145" width="66" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Lookup_di" bpmnElement="Task_Lookup">
+        <dc:Bounds x="250" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Create_di" bpmnElement="Task_Create">
+        <dc:Bounds x="400" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Reserve_di" bpmnElement="Task_Reserve">
+        <dc:Bounds x="550" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Invite_di" bpmnElement="Task_Invite">
+        <dc:Bounds x="700" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_Accept_di" bpmnElement="Event_Accept">
+        <dc:Bounds x="862" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="845" y="145" width="71" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_Assign_di" bpmnElement="Task_Assign">
+        <dc:Bounds x="950" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="1112" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1108" y="145" width="55" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_start_lookup_di" bpmnElement="Flow_start_lookup">
+        <di:waypoint x="196" y="120" /><di:waypoint x="250" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_lookup_create_di" bpmnElement="Flow_lookup_create">
+        <di:waypoint x="350" y="120" /><di:waypoint x="400" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_create_reserve_di" bpmnElement="Flow_create_reserve">
+        <di:waypoint x="500" y="120" /><di:waypoint x="550" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_reserve_invite_di" bpmnElement="Flow_reserve_invite">
+        <di:waypoint x="650" y="120" /><di:waypoint x="700" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_invite_accept_di" bpmnElement="Flow_invite_accept">
+        <di:waypoint x="800" y="120" /><di:waypoint x="862" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_accept_assign_di" bpmnElement="Flow_accept_assign">
+        <di:waypoint x="898" y="120" /><di:waypoint x="950" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_assign_end_di" bpmnElement="Flow_assign_end">
+        <di:waypoint x="1050" y="120" /><di:waypoint x="1112" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

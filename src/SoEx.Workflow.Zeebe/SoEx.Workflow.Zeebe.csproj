@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Zeebe</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Zeebe</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Camunda 8 / Zeebe: the broker owns the flow as a BPMN graph (authored in a visual editor); this
+       adapter is the .NET job-worker side. A governed service-task job runs one GovernedStep; a process
+       end-execution-listener job runs the GovernedTermination crypto-shred. Talks to the gateway over gRPC
+       via the community zb-client. Native flow only (the portable flow is not expressed on BPMN). -->
+  <ItemGroup>
+    <PackageReference Include="zb-client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <!-- The Tier-1 guard-enforcement suite drives the broker-free job seam (ExecuteStepJob / ExecuteTerminationJob)
+       directly, the way the DurableTask suite drives its StepActivity. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

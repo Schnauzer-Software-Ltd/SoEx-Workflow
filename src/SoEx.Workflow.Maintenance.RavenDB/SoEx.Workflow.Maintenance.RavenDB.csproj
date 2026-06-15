@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Maintenance.RavenDB</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Maintenance.RavenDB</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Durable erasure-maintenance state over RavenDB compare-exchange: the held-instance log and the open
+       erasure-request log the maintenance backstop reads. Survives a restart and is shared cross-process, so a
+       separately-hosted scheduler can re-drive holds and review deadlines across the fleet. Same compare-
+       exchange pattern as the key/idempotency stores. -->
+  <ItemGroup>
+    <PackageReference Include="RavenDB.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+    <!-- The bundled RavenErasureStores backs the subject index from the same document store as the maintenance
+         logs, so it composes the RavenDB subject-index store. Maintenance depends on the index (it operates on
+         the indexed instances), so the dependency direction is correct. -->
+    <ProjectReference Include="../SoEx.Workflow.SubjectIndex.RavenDB/SoEx.Workflow.SubjectIndex.RavenDB.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

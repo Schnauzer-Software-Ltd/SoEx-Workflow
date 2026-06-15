@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Engine.Subscription.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Engine.Subscription.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Subscription engine-component IMPLEMENTATION, in its own assembly. Depends only on its contract. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Engine.Subscription.Interface.csproj" />
+  </ItemGroup>
+
+</Project>

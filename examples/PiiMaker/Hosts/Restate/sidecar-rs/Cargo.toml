@@ -1,0 +1,20 @@
+[package]
+name = "piimaker-restate-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "PiiMaker example Restate sidecar (Rust) — the consumer-authored native flows + a generic portable flow, separate from the library/test sidecar."
+
+[[bin]]
+name = "piimaker-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+restate-sdk = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+serde = { version = "1", features = ["derive"] }
+# HTTP-only client (localhost callbacks to the .NET governed-step host); no TLS backend needed.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+tracing-subscriber = "0.3"
+
+[profile.release]
+opt-level = 2

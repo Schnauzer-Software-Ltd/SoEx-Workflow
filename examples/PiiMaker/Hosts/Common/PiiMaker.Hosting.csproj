@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Hosting</RootNamespace>
+    <AssemblyName>PiiMaker.Hosting</AssemblyName>
+  </PropertyGroup>
+
+  <!-- This shared project hosts the web control panel: it composes the real "membership" SoEx System and
+       exposes the trigger seam over HTTP. The SoEx.Method.Generators.AspNetCore generator runs HERE and
+       emits the IMembershipEntry controller + SoExKnownTypes into THIS assembly (PiiMaker.Hosting); each
+       per-runtime host references it and adds it as an MVC application part. -->
+  <PropertyGroup>
+    <!-- Tells the generator which "<Company>.Manager.*.Interface" assemblies to lift, and the root for the
+         generated PiiMaker.Generated.* namespaces. Must be compiler-visible for the generator to read it. -->
+    <MethodGeneratorNamespace>PiiMaker</MethodGeneratorNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="MethodGeneratorNamespace" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- Shared composition: stands up the real "membership" SoEx System. Every host reuses it; only the
+       way the governed step/termination are driven onto a runtime differs per host. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\PiiMaker.csproj" />
+    <!-- The method-side proxy shim the generated controllers call (PiiMaker.iFx.Proxy.Proxy). -->
+    <ProjectReference Include="..\..\iFx\PiiMaker.iFx.csproj" />
+    <!-- Direct ref so the generator sees the *.Interface assembly in ReferencedAssemblySymbols. -->
+    <ProjectReference Include="..\..\Component\Manager\Membership\Interface\PiiMaker.Manager.Membership.Interface.csproj" />
+    <!-- The two durable key stores, so the composition can pick one at runtime (PIIMAKER_KEYSTORE). These
+         transitively bring VaultSharp / RavenDB.Client / BouncyCastle into every host that hosts this. -->
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Keys.OpenBao\SoEx.Workflow.Keys.OpenBao.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Keys.RavenDB\SoEx.Workflow.Keys.RavenDB.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Idempotency.RavenDB\SoEx.Workflow.Idempotency.RavenDB.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.SubjectIndex.RavenDB\SoEx.Workflow.SubjectIndex.RavenDB.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.SubjectIndex.EfCore\SoEx.Workflow.SubjectIndex.EfCore.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Maintenance.RavenDB\SoEx.Workflow.Maintenance.RavenDB.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Maintenance.EfCore\SoEx.Workflow.Maintenance.EfCore.csproj" />
+  </ItemGroup>
+
+  <!-- SQLite provider so the example can back the EF Core subject index (PIIMAKER_SUBJECTINDEX=efcore). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SoEx.Hosting" />
+    <PackageReference Include="SoEx.Container" />
+    <PackageReference Include="SoEx.Transport.InProc" />
+    <!-- Microsoft.Extensions.Hosting comes from the Microsoft.AspNetCore.App framework reference. -->
+    <!-- PrivateAssets="all": the generator runs HERE only. Without it the analyzer flows across the project
+         reference into each host exe, where MethodGeneratorNamespace is unset (defaults to "Company") and it
+         emits a second, broken controller. The hosts consume the already-compiled controller via an MVC part. -->
+    <PackageReference Include="SoEx.Method.Generators.AspNetCore" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- The static control-panel UI lives here once; each host serves its own copy from wwwroot. -->
+  <ItemGroup>
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewer" />
+  </ItemGroup>
+
+</Project>

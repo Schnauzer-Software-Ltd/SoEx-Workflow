@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Method.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Method.Workflow</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Workflow utility IMPLEMENTATION + the host-side WorkflowSeam wiring. A reusable SoEx Method
+       component: any subsystem that uses the governed workflow core can host this as its workflow utility.
+       Depends on the contracts, the governed core (sealer, erasure coordinator, gateway), and SoEx.Proxy for
+       the cross-subsystem erasure-termination call. SoEx.Abstractions is named directly by WorkflowSeam. -->
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Method.Workflow.Abstractions/SoEx.Method.Workflow.Abstractions.csproj" />
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SoEx.Proxy" />
+    <PackageReference Include="SoEx.Abstractions" />
+  </ItemGroup>
+
+</Project>

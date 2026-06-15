@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Product-repo push gate. A product change can break the tests, so this runs the SAME attestation gate as
+# the test repo (the attestation binds both repos' trees, so a product edit invalidates it). See the test
+# repo's scripts/prepush-verify.sh.
+exec /home/builder/soex-workflow-test/scripts/prepush-verify.sh "$@"

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Manager.Membership.Service</RootNamespace>
+    <AssemblyName>PiiMaker.Manager.Membership.Service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Membership manager IMPLEMENTATION, in its own assembly. The manager orchestrates the Engine and
+       Access components, so it references their CONTRACT assemblies (never their implementations) plus its
+       own contract; it reaches the Workflow utility through its contract; it touches the governed core for
+       the erasure events. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Interface\PiiMaker.Manager.Membership.Interface.csproj" />
+    <!-- The manager only PROXIES to the workflow utility, so it references the Abstractions package only —
+         never the implementation. -->
+    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Method.Workflow.Abstractions\SoEx.Method.Workflow.Abstractions.csproj" />
+    <ProjectReference Include="..\..\..\Access\Billing\Interface\PiiMaker.Access.Billing.Interface.csproj" />
+    <ProjectReference Include="..\..\..\Access\Identity\Interface\PiiMaker.Access.Identity.Interface.csproj" />
+    <ProjectReference Include="..\..\..\Access\Provisioning\Interface\PiiMaker.Access.Provisioning.Interface.csproj" />
+    <ProjectReference Include="..\..\..\Access\Retention\Interface\PiiMaker.Access.Retention.Interface.csproj" />
+    <ProjectReference Include="..\..\..\Engine\Subscription\Interface\PiiMaker.Engine.Subscription.Interface.csproj" />
+    <ProjectReference Include="..\..\..\..\iFx\PiiMaker.iFx.csproj" />
+    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

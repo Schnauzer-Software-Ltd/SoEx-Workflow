@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Keys.OpenBao</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Keys.OpenBao</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A durable, shared IInstanceKeyStore backed by OpenBao's Transit secrets engine (OpenBao speaks the
+       Vault HTTP API, so VaultSharp is the client). One Transit key per instance: the key never leaves the
+       server — Encrypt/Decrypt are server-side calls — and Destroy deletes the key, rendering every envelope
+       sealed under it permanently undecryptable (crypto-shred). -->
+  <ItemGroup>
+    <PackageReference Include="VaultSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

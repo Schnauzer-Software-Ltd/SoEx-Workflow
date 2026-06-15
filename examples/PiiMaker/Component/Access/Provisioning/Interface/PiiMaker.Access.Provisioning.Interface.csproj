@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.Access.Provisioning.Interface</RootNamespace>
+    <AssemblyName>PiiMaker.Access.Provisioning.Interface</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Provisioning access-component CONTRACT, in its own assembly (<Company>.<Tier>.<Component>.Interface) —
+       the component-per-assembly convention. A plain contract: no SoEx dependency. The service implements it
+       in PiiMaker.Access.Provisioning.Service. -->
+
+</Project>

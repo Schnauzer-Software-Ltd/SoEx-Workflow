@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>PiiMaker.iFx</RootNamespace>
+    <AssemblyName>PiiMaker.iFx</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The method's infrastructure (iFx) assembly, a sibling of Component — the SoEx Method layout. Holds the
+       proxy shim (PiiMaker.iFx.Proxy.Proxy) the generated AspNetCore controllers call. It delegates to the
+       SoEx.Proxy package rather than touching the container directly — the same shape the SoEx solution
+       template ships. -->
+  <ItemGroup>
+    <PackageReference Include="SoEx.Proxy" />
+  </ItemGroup>
+
+</Project>

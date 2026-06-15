@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Method.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Method.Workflow.Abstractions</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The Workflow utility CONTRACTS: the External (host-facing) and SubSystem (peer-facing) IWorkflowUtility
+       faces plus EraseSummary. They name no SoEx types (string / object / string[] / record only), so this
+       package has ZERO dependencies — a manager that proxies to the utility references this and drags in
+       nothing else (not the implementation, not the governed core). -->
+
+</Project>

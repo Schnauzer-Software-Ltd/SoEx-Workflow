@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PiiMaker.Host.Zeebe</RootNamespace>
+    <AssemblyName>PiiMaker.Host.Zeebe</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Host on Camunda 8 / Zeebe: the onboarding flow is a BPMN graph the broker owns (authored visually,
+       deployed at startup). The shared composition stands up the membership system; the Zeebe adapter
+       reference brings the gRPC job-worker client + the governed step/termination worker mechanics. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
+    <ProjectReference Include="..\..\PiiMaker.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Zeebe\SoEx.Workflow.Zeebe.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- The visual-editor artifact: deployed to the broker at startup, so it must sit in the host output. -->
+  <ItemGroup>
+    <Content Include="bpmn\membership-onboard.bpmn" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The static control-panel UI lives once in Shared/wwwroot; copy it into this host's output wwwroot. -->
+  <Target Name="CopyControlPanelUi" AfterTargets="Build;Publish">
+    <ItemGroup>
+      <ControlPanelUi Include="..\Common\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ControlPanelUi)"
+          DestinationFiles="@(ControlPanelUi->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+[Dd]ebug/
+[Rr]elease/
+
+# Python (the Restate engine shell — reference fallback)
+__pycache__/
+*.pyc
+
+# Rust (the Restate engine shell — primary); Cargo.lock IS committed (binary crate)
+target/

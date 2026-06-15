@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Keys.RavenDB</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Keys.RavenDB</AssemblyName>
+  </PropertyGroup>
+
+  <!-- A durable, shared IInstanceKeyStore. RavenDB compare-exchange holds, per instance, a data key (DEK)
+       wrapped under a master key (KEK) the consumer supplies; payload crypto is AES-256-GCM via Bouncy
+       Castle. RavenDB is the single source of truth for key liveness — no in-process key cache — so a
+       Destroy on any app instance hard-deletes the compare-exchange value and shreds cluster-wide. -->
+  <ItemGroup>
+    <PackageReference Include="RavenDB.Client" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SoEx.Workflow.Core.Tests" />
+  </ItemGroup>
+
+</Project>

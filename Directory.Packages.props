@@ -1,0 +1,51 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <!-- SoEx runtime, public nuget.org @ alpha-3.0 (exact-pinned; unlisted prerelease). -->
+  <ItemGroup>
+    <PackageVersion Include="SoEx.Abstractions" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Topology" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Context" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Container" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Proxy" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Endpoint" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Hosting" Version="0.0.0-alpha-3.0" />
+    <PackageVersion Include="SoEx.Transport.InProc" Version="0.0.0-alpha-3.0" />
+    <!-- Source generator: lifts a *.Manager.*.Interface assembly's interfaces into POST controllers
+         (Proxy.ForService dispatch). Used by the example web hosts to expose the trigger seam. -->
+    <PackageVersion Include="SoEx.Method.Generators.AspNetCore" Version="1.0.0-alpha-2.0" />
+  </ItemGroup>
+
+  <!-- Engine adapters: latest at first use (D5). -->
+  <ItemGroup>
+    <!-- DTFx on the modern SDK (Durable Task Scheduler model; DTS emulator for local dev). -->
+    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.25.0-preview.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.25.0-preview.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.25.0-preview.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.25.0-preview.1" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+    <PackageVersion Include="Temporalio" Version="1.15.0" />
+    <!-- Zeebe (Camunda 8) gRPC community client — the job-worker SDK for the native BPMN flow. -->
+    <PackageVersion Include="zb-client" Version="2.10.0" />
+    <PackageVersion Include="Elsa" Version="3.7.0" />
+    <!-- Elsa EF Core persistence (matches core 3.7.0) — for the durable (SQLite) Elsa example host. -->
+    <PackageVersion Include="Elsa.Persistence.EFCore" Version="3.7.0" />
+    <PackageVersion Include="Elsa.Persistence.EFCore.Sqlite" Version="3.7.0" />
+  </ItemGroup>
+
+  <!-- Durable key-store backends: production IInstanceKeyStore implementations (crypto-shred over a
+       shared, durable store). OpenBao via the Transit engine (key never leaves the server); RavenDB
+       compare-exchange holding a master-key-wrapped data key, with Bouncy Castle for the AES-256-GCM. -->
+  <ItemGroup>
+    <PackageVersion Include="VaultSharp" Version="1.17.5.1" />
+    <PackageVersion Include="RavenDB.Client" Version="7.1.2" />
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <!-- Durable ISubjectIndex over EF Core (provider-agnostic; the consumer supplies the DB provider). -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.3" />
+    <!-- SQLite provider used by the PiiMaker example to back the EF Core subject index. -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.3" />
+  </ItemGroup>
+</Project>
