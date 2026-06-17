@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+    <ProjectReference Include="../SoEx.Workflow.Stores.Abstractions/SoEx.Workflow.Stores.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

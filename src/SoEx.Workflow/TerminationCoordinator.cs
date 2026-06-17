@@ -51,9 +51,10 @@ public sealed class TerminationCoordinator(
                 {
                     // Quarantine: the retention obligation is unmet, so the key is NOT
                     // destroyed; auto-retry stops and the instance is flagged.
-                    await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, error));
+                    string safeError = SafeHeldError(instanceId, error);
+                    await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
                     heldRegistry?.Record(new HeldInstance(
-                        instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, SafeHeldError(instanceId, error)));
+                        instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
                     return TerminationOutcome.Held;
                 }
 

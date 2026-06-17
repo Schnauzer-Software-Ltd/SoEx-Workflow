@@ -1,8 +1,9 @@
 'use strict';
 
 // One static page drives any running host. Pick a host from the dropdown; every call is prefixed with its
-// base URL (CORS is open on each host). The generator lifts IMembershipEntry into POST /IMembershipEntry/<Method>;
-// the /example/* endpoints are hand-written affordances (scenario toggles, status, erasure).
+// base URL (CORS is open on each host). The trigger controller exposes IMembershipManager as a single POST
+// /IMembershipManager/Trigger; the body is a polymorphic TriggerBase whose $type names the trigger. The
+// /example/* endpoints are hand-written affordances (scenario toggles, status, erasure).
 
 const hostSel = document.getElementById('host');
 const healthDot = document.getElementById('health');
@@ -30,7 +31,7 @@ function updateDashboardLink() {
 }
 
 // ---- transport -------------------------------------------------------------------------------
-const entryUrl = (method) => `${base}/IMembershipEntry/${method}`;
+const entryUrl = (method) => `${base}/IMembershipManager/${method}`;
 
 async function post(url, body) {
   const res = await fetch(url, {
@@ -42,7 +43,10 @@ async function post(url, body) {
   const txt = await res.text();
   return txt ? JSON.parse(txt) : null;
 }
-const entry = (method, body) => post(entryUrl(method), body);
+// One polymorphic POST /IMembershipManager/Trigger; the $type names the trigger case and must be the first
+// property in the body (System.Text.Json reads the discriminator first).
+const TRIGGER_TYPE = 'PiiMaker.Manager.Membership.Interface.TriggerBase+';
+const trigger = (kind, fields = {}) => post(entryUrl('Trigger'), { $type: TRIGGER_TYPE + kind, ...fields });
 
 // ---- logging ---------------------------------------------------------------------------------
 function log(msg, cls) {
@@ -105,27 +109,27 @@ const v = (id) => document.getElementById(id).value.trim();
 
 const actions = {
   async startOnboarding() {
-    const id = await entry('StartOnboarding', { orgId: v('on-org'), email: v('on-email'), offer: v('on-offer') });
+    const id = await trigger('StartOnboarding', { orgId: v('on-org'), email: v('on-email'), offer: v('on-offer') });
     track('onboard', id); log(`began onboarding → ${id}`, 'ok');
   },
   async accountVerified() {
-    await entry('AccountVerified', { orgId: v('on-org'), email: v('on-email') });
+    await trigger('AccountVerified', { orgId: v('on-org'), email: v('on-email') });
     log('raised account-verified', 'ok');
   },
   async inviteAccepted() {
-    await entry('InviteAccepted', { orgId: v('on-org'), email: v('on-email') });
+    await trigger('InviteAccepted', { orgId: v('on-org'), email: v('on-email') });
     log('raised invite-accepted', 'ok');
   },
   async startRenewal() {
-    const id = await entry('StartRenewal', { subscriberId: v('sub-id') });
+    const id = await trigger('StartRenewal', { subscriberId: v('sub-id') });
     track('renew', id); log(`began renewal → ${id}`, 'ok');
   },
   async paymentUpdated() {
-    await entry('PaymentUpdated', { subscriberId: v('sub-id') });
+    await trigger('PaymentUpdated', { subscriberId: v('sub-id') });
     log('raised payment-updated', 'ok');
   },
   async startOffboarding() {
-    const id = await entry('StartOffboarding', { subjectId: v('off-id') });
+    const id = await trigger('StartOffboarding', { subjectId: v('off-id') });
     track('offboard', id); log(`began offboarding → ${id}`, 'ok');
   },
   async forceDecline() {

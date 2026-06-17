@@ -1,7 +1,7 @@
 # PiiMaker example — Restate sidecar (Rust)
 
 The example's own Restate sidecar, separate from the library/test sidecar
-(`src/SoEx.Workflow.Restate/restate-sidecar-rs`). Restate ships no .NET SDK, so on this runtime the
+(`src/SoEx.Workflow.Runtime.Restate/restate-sidecar-rs`). Restate ships no .NET SDK, so on this runtime the
 durable flow runs out-of-process in the sidecar's language and calls back to a thin .NET governed-step
 host over HTTP.
 

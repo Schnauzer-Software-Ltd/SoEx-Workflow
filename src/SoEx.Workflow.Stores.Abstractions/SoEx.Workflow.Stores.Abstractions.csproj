@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Stores.Abstractions</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The persistence contracts a durable backend implements: the key store, subject index, idempotency
+       store, and the erasure-maintenance registries. References only SoEx.Workflow.Abstractions (for the
+       IdempotencyKey carried by IIdempotencyStore / IHeldInstanceRegistry). The types stay in the
+       SoEx.Workflow namespace, so a store implementation references this without pulling in the governed
+       core/hosting. -->
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow.Abstractions/SoEx.Workflow.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

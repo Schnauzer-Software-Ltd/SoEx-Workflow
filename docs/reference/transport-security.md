@@ -39,7 +39,7 @@ binds whatever URL `RestateWorkflowHost.Build` is given. Payloads are sealed, bu
   system/web-PKI roots; set `STEP_CA_CERT` to a PEM file to trust a private CA), and serve the .NET host
   over HTTPS — pass an `https://` `stepUrl` to `RestateWorkflowHost.Build` with the optional
   `serverCertificate`, or configure the certificate through standard Kestrel config
-  (`Kestrel:Certificates:Default`). See the [Restate adapter README](../../src/SoEx.Workflow.Restate/README.md).
+  (`Kestrel:Certificates:Default`). See the [Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).
 
 The token is compared in constant time, and the host refuses to start without one.
 

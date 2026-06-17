@@ -11,7 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
     <ProjectReference Include="..\..\PiiMaker.csproj" />
-    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Elsa\SoEx.Workflow.Elsa.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Runtime.Elsa\SoEx.Workflow.Runtime.Elsa.csproj" />
   </ItemGroup>
 
   <ItemGroup>

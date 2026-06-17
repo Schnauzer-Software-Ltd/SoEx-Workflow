@@ -12,7 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Common\PiiMaker.Hosting.csproj" />
     <ProjectReference Include="..\..\PiiMaker.csproj" />
-    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Zeebe\SoEx.Workflow.Zeebe.csproj" />
+    <ProjectReference Include="..\..\..\..\src\SoEx.Workflow.Runtime.Zeebe\SoEx.Workflow.Runtime.Zeebe.csproj" />
   </ItemGroup>
 
   <ItemGroup>

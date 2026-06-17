@@ -92,7 +92,9 @@ crypto-shred renders all of it unrecoverable at once. See
 [Author a native flow](../how-to/author-a-native-flow.md).
 
 **Workflow binding / `WorkflowBinding<I>`** — An ordinary SoEx binding that hosts your step component;
-you put it in your topology and feed it to the host at process startup.
+you put it in your topology and feed it to the host at process startup. It lives in the
+`SoEx.Transport.Workflow` package (the SoEx transport for the workflow seam), alongside its transport,
+channel, endpoint, and `WorkflowListeners`.
 
 ## Governance, keys, and subjects
 
@@ -202,7 +204,7 @@ via an interceptor's activity, off the replay path.
 
 **Restate** — Cross-language runtime with no .NET SDK; the flow runs out-of-process in the *Restate
 sidecar* (`restate-sidecar-rs`), which calls back into .NET over HTTP. See the
-[Restate adapter README](../../src/SoEx.Workflow.Restate/README.md).
+[Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).
 
 **Camunda 8 / Zeebe** — *Native-only* runtime: the flow is a BPMN graph the broker owns, authored in a
 visual editor. A governed service-task job runs one `GovernedStep`; a process end execution-listener job
@@ -222,7 +224,7 @@ state across the boundary (the portable `Loop` action).
 
 ## Packaging and testing
 
-**Adapter** — A per-runtime package (`SoEx.Workflow.Temporal`, `.DurableTask`, `.Elsa`, `.Restate`,
+**Adapter** — A per-runtime package (`SoEx.Workflow.Runtime.Temporal`, `.DurableTask`, `.Elsa`, `.Restate`,
 `.Zeebe`) that wires the *governed core* onto one backend: a `*WorkflowGateway`, a *driver* (portable)
 and/or a *termination hook* (native), and a `*WorkflowHost` to build the worker.
 

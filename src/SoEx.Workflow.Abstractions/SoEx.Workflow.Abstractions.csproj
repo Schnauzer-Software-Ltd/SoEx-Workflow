@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Abstractions</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The authoring contracts a consumer's component compiles against: the portable WorkflowAction model,
+       the IErasureEvents contract + its contexts, the IdempotencyKey primitive, and DeterministicInstanceId.
+       Pure BCL — no SoEx dependencies. The types stay in the SoEx.Workflow namespace; only the assembly is
+       narrower, so a component references this without pulling in the governed core/hosting. -->
+
+</Project>

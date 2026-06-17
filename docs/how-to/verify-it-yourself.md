@@ -15,7 +15,7 @@ quietly skip the thing you cared about, and a red run isn't just a backend that 
 ## What to run
 
 - The example hosts. `examples/PiiMaker/Hosts/<Runtime>` each stand up the same consumer system as a
-  small web control panel and expose plain HTTP (`POST /IMembershipEntry/…`, `GET /example/status/{id}`
+  small web control panel and expose plain HTTP (`POST /IMembershipManager/…`, `GET /example/status/{id}`
   returning `{keyLive}`, `POST /example/erase`, `GET /example/host`). Drive them however you like.
 - A worked end-to-end exercise.
   [`examples/dev/smoke-all-hosts.sh`](../../examples/dev/smoke-all-hosts.sh) runs one full path — start
@@ -23,7 +23,7 @@ quietly skip the thing you cared about, and a red run isn't just a backend that 
   runtime, and is written to survive the timing traps below. It's a starting point you can read and
   adapt, not the limit of what's worth checking.
 - Builds: `dotnet build SoEx.Workflow.sln` and `examples/SoEx.Workflow.Examples.sln`. If you exercise
-  Restate, also `cargo build --release` in `src/SoEx.Workflow.Restate/restate-sidecar-rs` (see trap 1).
+  Restate, also `cargo build --release` in `src/SoEx.Workflow.Runtime.Restate/restate-sidecar-rs` (see trap 1).
 
 ## Coverage depends on which backends are up
 

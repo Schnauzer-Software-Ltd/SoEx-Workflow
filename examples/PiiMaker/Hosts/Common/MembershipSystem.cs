@@ -15,6 +15,8 @@ using PiiMaker.Engine.Subscription.Interface;
 using PiiMaker.Engine.Subscription.Service;
 using PiiMaker.Manager.Membership.Interface;
 using PiiMaker.Manager.Membership.Service;
+using Native = PiiMaker.Manager.Membership.Interface.Native;
+using Portable = PiiMaker.Manager.Membership.Interface.Portable;
 using SoEx.Method.Workflow;
 using WfExternal = SoEx.Method.Workflow.External;
 using WfSubSystem = SoEx.Method.Workflow.SubSystem;
@@ -23,8 +25,9 @@ using SoEx.Context;
 using SoEx.Hosting;
 using SoEx.Hosting.Default;
 using SoEx.Transport.InProc;
+using SoEx.Transport.Workflow;
 using SoEx.Workflow;
-using SoEx.Workflow.InMemory;
+using SoEx.Workflow.Runtime.InMemory;
 using SoEx.Workflow.Keys.OpenBao;
 using SoEx.Workflow.Keys.RavenDB;
 using SoEx.Workflow.Idempotency.RavenDB;
@@ -55,8 +58,8 @@ namespace PiiMaker.Hosting;
 public static class MembershipSystem
 {
     public sealed record Composition(
-        IWorkflowDispatch Endpoint, IMessageSerializer Serializer, IErasureEvents Erasure, RetainedStore Retained,
-        IMembershipEntry Entry, WorkflowSeam Seam, BillingStore Billing, ILifetimeScope Scope,
+        IWorkflowDispatch NativeEndpoint, IWorkflowDispatch PortableEndpoint, IMessageSerializer Serializer, IErasureEvents Erasure, RetainedStore Retained,
+        IMembershipManager Manager, WorkflowSeam Seam, BillingStore Billing, ILifetimeScope Scope,
         IInstanceKeyStore Keys, ISubjectIndex Index, IIdempotencyStore Idempotency, WfExternal.IWorkflowUtility Workflow,
         IHeldInstanceRegistry HeldLog);
 
@@ -93,7 +96,16 @@ public static class MembershipSystem
 
         static IServiceCollection Svc() => new ServiceCollection().AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
 
-        IServiceCollection managerSvc = Svc().AddSingleton(listeners).AddSingleton(policy);
+        // The deployment secret the manager keys its PII-free instance ids under (DeterministicInstanceId.Keyed):
+        // the start side and the continue side both run through the manager, so it must be one stable value —
+        // stable across restarts so a parked flow's id re-derives, and never journaled. A real deployment loads it
+        // from a secret store (here PIIMAKER_INSTANCEID_SECRET, base64); the demo falls back to a fixed value so it
+        // runs with no setup.
+        byte[] idSecret = Environment.GetEnvironmentVariable("PIIMAKER_INSTANCEID_SECRET") is { Length: > 0 } b64
+            ? Convert.FromBase64String(b64)
+            : "piimaker-demo-instance-id-secret"u8.ToArray();
+
+        IServiceCollection managerSvc = Svc().AddSingleton(listeners).AddSingleton(policy).AddSingleton(new InstanceIdSecret(idSecret));
         IServiceCollection workflowSvc = Svc().AddSingleton(seam).AddSingleton(keys).AddSingleton(index).AddSingleton(idempotency)
             .AddSingleton(heldRegistry).AddSingleton(requestRegistry).AddSingleton(pendingRequests);
         IServiceCollection identitySvc = Svc().AddSingleton(new IdentityStore());
@@ -142,12 +154,16 @@ public static class MembershipSystem
                         Implementation = typeof(MembershipManager),
                         Endpoints =
                         [
-                            new WorkflowBinding<IMembershipManager>(subSystem),
+                            // Two durable governed-step seams on the one entry component: the native single-step
+                            // contract and the portable flow contract. A host binds its GovernedStep/endpoint to
+                            // whichever contract owns the operation it drives (dispatch is by typeof(I)).
+                            new WorkflowBinding<Native.IMembershipManager>(subSystem),
+                            new WorkflowBinding<Portable.IMembershipManager>(subSystem),
                             // One erasure termination endpoint. Both the host (governed termination) and the utility
                             // (sweep) reach it through the single IErasureEvents client below — no second
                             // registration on the type, so no aliasing and no per-caller contract split.
                             new InProcBinding<IErasureEvents>(subSystem),
-                            new InProcBinding<IMembershipEntry>(subSystem),
+                            new InProcBinding<IMembershipManager>(subSystem),
                         ],
                         Proxies =
                         [
@@ -192,7 +208,7 @@ public static class MembershipSystem
             [
                 new Topology.Client<IErasureEvents> { SubSystem = subSystem, Service = new InProcBinding<IErasureEvents>(subSystem) },
                 new Topology.Client<WfExternal.IWorkflowUtility> { SubSystem = workflowSub, Service = new InProcBinding<WfExternal.IWorkflowUtility>(workflowSub) },
-                new Topology.Client<IMembershipEntry> { SubSystem = subSystem, Service = new InProcBinding<IMembershipEntry>(subSystem) },
+                new Topology.Client<IMembershipManager> { SubSystem = subSystem, Service = new InProcBinding<IMembershipManager>(subSystem) },
             ],
         };
 
@@ -200,16 +216,17 @@ public static class MembershipSystem
         IHost host = builder.Build();
         host.Start();
 
-        IWorkflowDispatch endpoint = listeners.ForAddress(new WorkflowBinding<IMembershipManager>(subSystem).Transport.Address);
+        IWorkflowDispatch nativeEndpoint = listeners.ForAddress(new WorkflowBinding<Native.IMembershipManager>(subSystem).Transport.Address);
+        IWorkflowDispatch portableEndpoint = listeners.ForAddress(new WorkflowBinding<Portable.IMembershipManager>(subSystem).Transport.Address);
         var serializer = host.Services.GetRequiredService<IMessageSerializer>();
         var erasure = host.Services.GetRequiredService<IErasureEvents>();
-        var entry = host.Services.GetRequiredService<IMembershipEntry>();
+        var entry = host.Services.GetRequiredService<IMembershipManager>();
         WfExternal.IWorkflowUtility workflow = host.Services.GetRequiredService<WfExternal.IWorkflowUtility>();
         // The Autofac root scope where the IMembershipEntry client proxy is registered. The web host sets
         // this async-local per request (UseSoContext), so the generated controller's Proxy.ForService<I>()
         // -> Container.Resolve<I>() resolves the entry proxy and dispatches through the pipeline.
         ILifetimeScope scope = host.Services.GetAutofacRoot();
-        return new Composition(endpoint, serializer, erasure, retainedStore, entry, seam, billingStore, scope,
+        return new Composition(nativeEndpoint, portableEndpoint, serializer, erasure, retainedStore, entry, seam, billingStore, scope,
             keys, index, idempotency, workflow, heldRegistry);
     }
 

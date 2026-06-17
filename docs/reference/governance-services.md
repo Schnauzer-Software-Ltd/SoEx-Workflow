@@ -5,7 +5,7 @@
 
 Three runtime-agnostic services back the per-step and termination governance, wired into every runtime
 through [`GovernedStep`/`GovernedTermination`](governed-core.md). Namespaces: `SoEx.Workflow`,
-`SoEx.Workflow.InMemory`. For swapping in durable implementations see
+`SoEx.Workflow.Runtime.InMemory`. For swapping in durable implementations see
 [Make crypto-shred durable](../how-to/make-crypto-shred-durable.md).
 
 ## `IInstanceKeyStore`

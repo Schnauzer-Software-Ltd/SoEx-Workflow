@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Transport.Workflow</RootNamespace>
+    <AssemblyName>SoEx.Transport.Workflow</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The SoEx transport for the workflow binding: the transport/binding/channel/endpoint that
+       point the client and host channels at the workflow seam. Like SoEx.Transport.InProc it
+       references only the transport abstraction packages, plus SoEx.Workflow for the
+       IWorkflowDispatch contract its endpoint implements (one-way: core never references this). -->
+  <ItemGroup>
+    <PackageReference Include="SoEx.Abstractions" />
+    <PackageReference Include="SoEx.Topology" />
+    <PackageReference Include="SoEx.Endpoint" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

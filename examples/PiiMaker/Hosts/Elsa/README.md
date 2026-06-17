@@ -2,7 +2,7 @@
 
 The native consumption model on a durable Elsa host. The consumer authors the flow in Elsa's own model
 (a registered workflow of activities + a bookmark wait), with each step a governed call to the
-Membership entrypoint's native operation (`OnboardStep`).
+Membership entrypoint's native operation (`Onboard`).
 
 Elsa is an in-process engine, not a server, so its "permanent" form is a persistence provider. This
 host persists the workflow position to a SQLite store (EF Core) and proves durability the way Elsa

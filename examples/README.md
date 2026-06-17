@@ -9,8 +9,8 @@ then adds a thin host with the specific wiring for one runtime × consumption mo
 
 Each host runs as a small web control panel: it stands up the "membership" system and serves a static
 page of buttons, one per external event the workflow waits for (a user verifies an account, accepts an
-invite, updates payment, a leaver is offboarded). You press a button, an HTTP request hits an
-auto-generated controller, the request dispatches into the SoEx manager, and the durable flow moves
+invite, updates payment, a leaver is offboarded). You press a button, an HTTP request hits the manager's
+trigger controller, the request dispatches into the SoEx manager, and the durable flow moves
 forward. That lets you exercise the whole workflow interactively, by hand, instead of watching one
 hardcoded script.
 
@@ -36,8 +36,8 @@ dotnet run --project examples/PiiMaker/Hosts/InProc -- 5001      # then open htt
 ```
 
 The page capability-gates its cards from `GET /example/host`, so each host shows only the flows it can
-drive. Buttons that fire the awaited events POST to the generated `IMembershipEntry` controller
-(`/IMembershipEntry/<Operation>`). A few example-only endpoints (`/example/*`) provide scenario toggles
+drive. Buttons that fire the awaited events POST to the manager's trigger controller
+(`/IMembershipManager/<Operation>`). A few example-only endpoints (`/example/*`) provide scenario toggles
 (force a billing decline to drive dunning), PII-free instance status (the per-instance key flips
 live → shredded at completion), and the erasure sweep.
 
@@ -103,25 +103,44 @@ REST/Operate read model exists. The RavenDB key store uses a demo-only master ke
 `PIIMAKER_RAVENDB_KEK` (base64, 32 bytes) is set. Backends bind to `127.0.0.1` only and have no
 volumes, so `down` wipes their data.
 
-### How the API is generated
+### How the trigger API is exposed
 
-The host projects reference `SoEx.Method.Generators.AspNetCore`, a source generator that lifts every
-interface in a `*.Manager.*.Interface` assembly into a POST controller dispatching via
-`Proxy.ForService<I>()`. `IMembershipEntry` lives in its own `PiiMaker.Manager.Membership.Interface`
-assembly for this reason; a per-request middleware (`UseSoContext`) sets the SoEx container
-scope so the generated controller resolves the composed manager and dispatches through the pipeline.
-The generator, middleware and JSON polymorphism resolver are wired once in `PiiMaker/Hosts/Common`
-(`PiiMaker.Hosting.MembershipWebHost`); the static UI lives once in `PiiMaker/Hosts/Common/wwwroot`.
+The panel's HTTP API is the inbound trigger seam (`IMembershipManager`) lifted into a POST controller
+that dispatches via `Proxy.ForService<I>()`. Here it is a hand-written controller
+(`PiiMaker.Hosting.IMembershipManagerController`, serving `/IMembershipManager/<Operation>`); a
+per-request middleware (`UseSoContext`) sets the SoEx container scope so it resolves the composed manager
+and dispatches through the pipeline. The controller, middleware and JSON polymorphism resolver are wired
+once in `PiiMaker/Hosts/Common` (`PiiMaker.Hosting.MembershipWebHost`); the static UI lives once in
+`PiiMaker/Hosts/Common/wwwroot`.
+
+> [!NOTE]
+> A source generator, `SoEx.Method.Generators.AspNetCore`, writes exactly this controller for you: it
+> lifts every interface in a `*.Manager.*.Interface` assembly into a POST controller, keyed by interface
+> name. This example does **not** use it, because the manager deliberately exposes three same-named
+> interfaces — the trigger seam `IMembershipManager` plus the governed-step contracts
+> `Native.IMembershipManager` and `Portable.IMembershipManager` — and same-named controllers collide. When
+> your trigger seam is a single interface with no same-named contracts in sub-namespaces (the common
+> case), add the generator package to the hosting project and delete the hand-written controller; the
+> output is identical.
 
 ## PiiMaker — the shared method project
 
 `PiiMaker/` is the consumer's business logic, with no hosting (that lives in each example):
 
-- One entrypoint, `IMembershipManager` / `MembershipManager`, models every flow as a distinct
-  operation. A host governs the one it wants by name (`GovernedStep` operation selection). Operations
-  come in two shapes: portable ops return a `WorkflowAction` (the component is the flow, and the
-  generic driver drives it on any runtime), while native ops return a PII-free `StepReceipt` (the
-  backend owns the flow and calls the op per step).
+- One entrypoint component, `MembershipManager`, models every flow as a distinct operation, grouped by
+  contract: the inbound trigger seam (`IMembershipManager`), the portable operations
+  (`Portable.IMembershipManager`, returning a `WorkflowAction` — the component is the flow, and the
+  generic driver drives it on any runtime), and the native single-step operations
+  (`Native.IMembershipManager`, returning a PII-free `StepReceipt` — the backend owns the flow and calls
+  the op per step). A host governs the one it wants by name (`GovernedStep` operation selection).
+
+  > [!NOTE]
+  > Splitting the manager into a partial `MembershipManager` class across `*.Native` and `*.Portable`
+  > sub-namespaces, with the per-model operations as explicit interface implementations, is only to make
+  > the demo easier to follow — it lets the native and portable shapes of each flow be read in isolation.
+  > It is not a required pattern: a real consumer can put everything on one interface in one class, or
+  > divide it along whatever lines suit them. SoEx governs an operation by name, regardless of which
+  > contract, namespace, or file it lives in.
 - It is a real SoEx System rather than a mock. The shared composition (`PiiMaker/Hosts/Common`,
   `PiiMaker.Hosting.MembershipSystem.Compose`) stands up a `Topology.System`: a "membership" subsystem
   whose entrypoint is the manager (hosted on a `WorkflowBinding` for the governed step) and whose
@@ -135,37 +154,44 @@ The generator, middleware and JSON polymorphism resolver are wired once in `PiiM
   component, never returned. (`MembershipManager` implements `IErasureEvents`; the termination invokes
   it through a system-resolved proxy.)
 
-### The flows (operations on `IMembershipManager`)
+### The flows (the governed-step operations)
+
+The portable operations live on `Portable.IMembershipManager`, the native single-step operations on
+`Native.IMembershipManager`; a host governs the one it wants by name.
 
 | Flow | Operation(s) | Demonstrates |
 |---|---|---|
-| **A Onboarding** | `Onboard` (portable), `OnboardStep` (native) | wait-for-event + timeout→compensation, idempotent assign, termination shred |
-| **B Subscription** | `Renew` (portable), `RenewStep` (native) | continue-as-new across renewal periods, dunning (backoff + payment-updated wait), cancel |
-| **C Offboarding** | `OffboardStep` (native-only) | parallel revocation fan-out, archive-in-`OnRetaining`, quarantine on archive failure |
+| **A Onboarding** | `Onboard` (portable + native) | wait-for-event + timeout→compensation, idempotent assign, termination shred |
+| **B Subscription** | `Renew` (portable + native) | continue-as-new across renewal periods, dunning (backoff + payment-updated wait), cancel |
+| **C Offboarding** | `Offboard` (native-only) | parallel revocation fan-out, archive-in-`OnRetaining`, quarantine on archive failure |
 | **D Erasure** | (no op — `IErasureEvents` + `ErasureCoordinator`) | "forget subject S" sweep over A/B/C instances |
 
-### Triggering from outside (`IMembershipEntry`)
+### Triggering from outside (`IMembershipManager`)
 
 Production systems don't drive a workflow from the code that started it: an identity provider's webhook
 says "this account was verified", a payment processor says "this card was updated". These callers have
-no instance handle, no payload, and no flow knowledge. The manager's second contract,
-`IMembershipEntry`, is that seam, and every host drives its demos through it.
+no instance handle, no payload, and no flow knowledge. The manager's inbound trigger contract,
+`IMembershipManager`, is that seam: one operation, `Trigger(TriggerBase trigger)`, where `TriggerBase`
+is a closed set with one case per trigger (each carrying only business identity). Every host drives its
+demos through it.
 
-To start, `StartOnboarding(org, email, offer)` / `StartRenewal(subscriberId)` /
-`StartOffboarding(subjectId)` derive the PII-free instance id from business identity
-(`DeterministicInstanceId`: a hash, so an email never appears in a journaled id), seal the seed
+To start, the `TriggerBase.StartOnboarding(OrgId, Email, Offer)` / `StartRenewal(SubscriberId)` /
+`StartOffboarding(SubjectId)` cases derive the PII-free instance id from business identity
+(`DeterministicInstanceId.Keyed`: an HMAC under a deployment secret, so an email never appears in a
+journaled id and a party who knows the identity but not the secret can't derive or confirm the id), seal the seed
 (`WorkflowSealer`, the seal side only; the component never holds the dispatch endpoint), and submit
 it through the engine-agnostic `IWorkflowGateway` the host wired.
 
-To continue, `AccountVerified` / `InviteAccepted` / `PaymentUpdated` re-derive the same id from the
-same business identity and raise a bare event with no payload. Each portable wait pre-sealed its own
-`OnEvent` continuation into the journal, so the flow decides what the event means; an event raised
+To continue, `TriggerBase.AccountVerified` / `InviteAccepted` / `PaymentUpdated` re-derive the same id
+from the same business identity and raise a bare event with no payload. Each portable wait pre-sealed its
+own `OnEvent` continuation into the journal, so the flow decides what the event means; an event raised
 with a payload still carries the next step, so data-carrying events keep working. (Offboarding is a
-self-completing fan-out, so it has no continuation events.)
+self-completing fan-out, so it has no continuation events.) `Trigger` returns the derived instance id in
+every case.
 
-`IMembershipEntry` is also what the AspNetCore method generator lifts into the panel's HTTP API; it
-lives in its own `PiiMaker.Manager.Membership.Interface` assembly so the generator picks it up. The UI
-buttons are those operations; the only runtime-specific code remains the host's seam wiring below
+`IMembershipManager` is what the panel's HTTP API exposes (the trigger controller above); it lives in
+its own `PiiMaker.Manager.Membership.Interface` assembly alongside the governed-step contracts. Each UI
+button fires one trigger case; the only runtime-specific code remains the host's seam wiring below
 them.
 
 That seam wiring is one `IWorkflowGateway` (+`WorkflowSealer`) per flow: `InProcWorkflowGateway`,
@@ -212,7 +238,7 @@ examples/PiiMaker/Hosts/<host> -- <port>`). All six are shipped and runnable.
   restate-server (`:8088`/`:9070`, Docker) and cargo to build the sidecar.
 - [`PiiMaker/Hosts/Zeebe`](PiiMaker/Hosts/Zeebe) (`:5006`) — onboarding (A) on Camunda 8 / Zeebe as a
   native BPMN flow (the flow is `bpmn/membership-onboard.bpmn`, deployed to the broker at startup;
-  native-only, no portable flow). A governed service-task job runs each `OnboardStep`; a process end
+  native-only, no portable flow). A governed service-task job runs each governed `Onboard` step; a process end
   execution-listener runs the crypto-shred termination. Requires Camunda 8 Run (gateway `:26500`,
   Operate `:8090`).
 

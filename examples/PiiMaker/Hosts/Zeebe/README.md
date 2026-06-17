@@ -5,7 +5,7 @@ Camunda 8 / Zeebe is native-only: the flow is a BPMN graph authored in a visual 
 process is the .NET job-worker side, driven from the browser as a control panel.
 
 - **A Onboarding** — native BPMN flow:
-  - each `soex-onboard-step` service task runs one governed `OnboardStep` (kind + sequence ride as task
+  - each `soex-onboard-step` service task runs one governed `Onboard` step (kind + sequence ride as task
     headers);
   - the `invite-accepted` message-catch is resumed by a correlated message;
   - a process end execution-listener job (`soex-terminal`) runs the crypto-shred termination at

@@ -49,7 +49,7 @@ public static class MembershipWebHost
 
         builder.Services
             .AddControllers()
-            // The generated controllers live in this (PiiMaker.Hosting) assembly, not the host exe.
+            // The trigger controller lives in this (PiiMaker.Hosting) assembly, not the host exe.
             .AddApplicationPart(typeof(MembershipWebHost).Assembly)
             .AddJsonOptions(o => o.JsonSerializerOptions.TypeInfoResolver = new SoExTypeInfoResolver());
 
@@ -73,7 +73,7 @@ public static class MembershipWebHost
         app.UseSoContext();        // establish the ambient SoEx scope so Proxy.ForService<I>() resolves
         app.UseDefaultFiles();     // serve wwwroot/index.html at "/"
         app.UseStaticFiles();
-        app.MapControllers();      // the generated POST /IMembershipEntry/{action} endpoints
+        app.MapControllers();      // the POST /IMembershipManager/{action} trigger endpoints
 
         ExampleEndpoints.Map(app, system, capabilities);
         hostEndpoints?.Invoke(app);

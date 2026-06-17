@@ -13,12 +13,24 @@ Camunda 8 / Zeebe is native-only.
 
 | Package | Native flow | Portable flow |
 |---|---|---|
-| `SoEx.Workflow` | `GovernedStep<I>`, `GovernedTermination`, `IErasureEvents`, the key store + subject index + idempotency abstractions + in-memory impls | `WorkflowAction` + InProc `WorkflowDriver<I>` + `InMemoryWorkflowRuntime` |
-| `SoEx.Workflow.DurableTask` | `GovernedTaskOrchestrator<TIn,TOut>` + `GovernedTerminationActivity` | `WorkflowOrchestration` + `StepActivity`/`TerminateActivity` + `DurableTaskWorkflowHost` |
-| `SoEx.Workflow.Temporal` | `GovernedTerminationInterceptor` + `GovernedTerminationActivities` | `WorkflowOrchestration` + `WorkflowActivities` + `TemporalWorkflowHost.BuildWorker` (durable) / `TemporalTestWorkflowHost` (time-skipping) |
-| `SoEx.Workflow.Elsa` | `GovernedTerminationActivity` | `WorkflowDriverActivity` + `ElsaWorkflowHost.BuildDurable` (durable) / `ElsaTestWorkflowHost` (in-memory) |
-| `SoEx.Workflow.Restate` | the native Rust `NativeOnboardWorkflow` sidecar handler | `RestateWorkflowHost` + the Rust `OnboardWorkflow` sidecar handler — see the [adapter README](../../src/SoEx.Workflow.Restate/README.md) |
-| `SoEx.Workflow.Zeebe` | `ZeebeWorkflowHost` (`OpenStepWorker` + `OpenTerminationListener`) over a BPMN graph | — *(native-only)* |
+| `SoEx.Workflow` | `GovernedStep<I>`, `GovernedTermination` + the governed-core plumbing (sealer, gateway/runtime/dispatch seams, erasure coordinators) over the abstractions packages | `WorkflowDriver<I>` — the portable driver |
+| `SoEx.Workflow.Runtime.InMemory` | the in-memory governance stores (key / index / idempotency + maintenance) and `InProcWorkflowGateway` | `InMemoryWorkflowRuntime` — the in-process driver target |
+| `SoEx.Workflow.Runtime.DurableTask` | `GovernedTaskOrchestrator<TIn,TOut>` + `GovernedTerminationActivity` | `WorkflowOrchestration` + `StepActivity`/`TerminateActivity` + `DurableTaskWorkflowHost` |
+| `SoEx.Workflow.Runtime.Temporal` | `GovernedTerminationInterceptor` + `GovernedTerminationActivities` | `WorkflowOrchestration` + `WorkflowActivities` + `TemporalWorkflowHost.BuildWorker` (durable) / `TemporalTestWorkflowHost` (time-skipping) |
+| `SoEx.Workflow.Runtime.Elsa` | `GovernedTerminationActivity` | `WorkflowDriverActivity` + `ElsaWorkflowHost.BuildDurable` (durable) / `ElsaTestWorkflowHost` (in-memory) |
+| `SoEx.Workflow.Runtime.Restate` | the native Rust `NativeOnboardWorkflow` sidecar handler | `RestateWorkflowHost` + the Rust `OnboardWorkflow` sidecar handler — see the [adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md) |
+| `SoEx.Workflow.Runtime.Zeebe` | `ZeebeWorkflowHost` (`OpenStepWorker` + `OpenTerminationListener`) over a BPMN graph | — *(native-only)* |
+
+## Abstractions
+
+A consumer references these rather than the governed core: a business component compiles against the
+authoring package; a durable backend implements the persistence package. Both keep their types in the
+`SoEx.Workflow` namespace, so they are a narrower assembly reference, not a different `using`.
+
+| Package | Ships |
+|---|---|
+| `SoEx.Workflow.Abstractions` | the authoring contracts a component compiles against: `WorkflowAction` (+ extensions), `IErasureEvents` + its contexts, `DeterministicInstanceId`, `IdempotencyKey` |
+| `SoEx.Workflow.Stores.Abstractions` | the persistence contracts a durable backend implements: `IInstanceKeyStore` / `ISubjectIndex` / `IIdempotencyStore`, the erasure-maintenance registries, and `ISubjectProtector` (+ `HmacSubjectProtector`). References `SoEx.Workflow.Abstractions` |
 
 ## Consumer-side utility (IDesign Method component)
 
@@ -29,8 +41,9 @@ Camunda 8 / Zeebe is native-only.
 
 ## Durable governance stores
 
-Swap these in for the in-memory defaults at your composition root — see
-[Make crypto-shred durable](../how-to/make-crypto-shred-durable.md).
+Swap these in for the in-memory defaults (`SoEx.Workflow.Runtime.InMemory`) at your composition root — see
+[Make crypto-shred durable](../how-to/make-crypto-shred-durable.md). Each implements a contract from
+`SoEx.Workflow.Stores.Abstractions`.
 
 | Package | Ships |
 |---|---|

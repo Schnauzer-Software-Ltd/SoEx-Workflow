@@ -4,7 +4,9 @@
 # Reference — the governed core
 
 The `SoEx.Workflow` types that both consumption models build on. Namespaces: `SoEx.Workflow` (core),
-`SoEx.Workflow.InMemory` (in-process impls).
+`SoEx.Workflow.Runtime.InMemory` (in-process impls), and `SoEx.Transport.Workflow` (the workflow binding,
+transport, channel, endpoint and `WorkflowListeners` — shipped as the `SoEx.Transport.Workflow`
+package, alongside the other `SoEx.Transport.*` transports).
 
 ## `GovernedStep<I>`
 

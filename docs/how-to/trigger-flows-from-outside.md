@@ -89,7 +89,7 @@ public Task AccountVerified(string orgId, string email) =>
     gateway.RaiseEventAsync(DeterministicInstanceId.For("onboard", orgId, email), "account-verified");
 ```
 
-The examples' `IMembershipEntry` ([`examples/`](../../examples/README.md)) is the worked version of
+The examples' `IMembershipManager` ([`examples/`](../../examples/README.md)) is the worked version of
 this seam, driven on all six runtimes as an interactive web control panel.
 
 ## Next

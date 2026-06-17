@@ -64,11 +64,11 @@ public static class WorkflowMaintenance
             new("drain", options.Drain, options.DrainInterval,
                 _ => utility.DrainEraseRequestsAsync()),
             new("sweep", options.Sweep, options.SweepInterval,
-                _ => utility.SweepAbandonedAsync((int)options.SweepOlderThan.TotalSeconds)),
+                _ => utility.SweepAbandonedAsync((long)options.SweepOlderThan.TotalSeconds)),
             new("held-redrive", options.ReDriveHeld, options.HeldReDriveInterval,
                 _ => utility.ReDriveHeldAsync()),
             new("deadline-review", options.ReviewDeadlines, options.DeadlineReviewInterval,
-                _ => utility.ReviewDeadlinesAsync((int)options.EscalateWithin.TotalSeconds)),
+                _ => utility.ReviewDeadlinesAsync((long)options.EscalateWithin.TotalSeconds)),
         };
 
         return new WorkflowMaintenanceLoop(time).RunAsync(passes, cancellation);

@@ -142,7 +142,7 @@ Restate has no .NET SDK, so you author the flow natively in the sidecar's langua
 sidecar drives the sequence, the durable-promise wait, and the termination, calling back to a small
 .NET governed-step host over HTTP: `POST /gov-step` runs `step.ExecuteAsync`, and `POST /gov-terminate`
 runs `termination.TerminateAsync`. See the
-[Restate adapter README](../../src/SoEx.Workflow.Restate/README.md).
+[Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).
 
 ## Camunda 8 / Zeebe (visual BPMN)
 

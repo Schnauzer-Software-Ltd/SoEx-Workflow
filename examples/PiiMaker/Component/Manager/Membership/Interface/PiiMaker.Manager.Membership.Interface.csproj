@@ -5,14 +5,13 @@
     <AssemblyName>PiiMaker.Manager.Membership.Interface</AssemblyName>
   </PropertyGroup>
 
-  <!-- The Membership method's CONTRACT, in its own assembly named for the namespace it holds
-       (<Company>.Manager.<Component>.Interface). The SoEx.Method.Generators.AspNetCore source generator
-       discovers interface assemblies by this name convention and lifts the interfaces here — the manager
-       contract and the inbound-trigger seam — into POST controllers, deriving the polymorphic command
-       discriminators from the command hierarchies in this assembly. The implementation and the rest of the
-       method live in PiiMaker, which references this. -->
+  <!-- The Membership method's CONTRACTS, in its own assembly named for the namespace it holds
+       (<Company>.Manager.<Component>.Interface): the inbound-trigger seam (IMembershipManager) plus the
+       governed-step contracts the flows bind (Native/Portable IMembershipManager). The trigger seam is
+       exposed over HTTP by the hand-written controller in PiiMaker.Hosting. The implementation and the rest
+       of the method live in PiiMaker, which references this. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow.Abstractions\SoEx.Workflow.Abstractions.csproj" />
   </ItemGroup>
 
   <ItemGroup>

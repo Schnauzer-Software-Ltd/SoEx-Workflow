@@ -148,7 +148,7 @@ Erasure is a durable admit-and-drain pair on the external face — there is no s
 | Member | Description |
 |---|---|
 | `Task<string> RequestEraseAsync(string subject)` | Resolve the subject to its instances from the index now, admit those PII-free instance ids to the `IPendingErasureRequests` store under a PII-free request id, and return at once without shredding. Idempotent on the subject. |
-| `Task<int> DrainEraseRequestsAsync()` | One pass: drive each admitted instance to crypto-shred through its owning manager's termination — a synchronous, per-manager shred. One of the maintenance passes (the built-in runner drives it by default); the host owns the cadence. |
+| `Task<long> DrainEraseRequestsAsync()` | One pass: drive each admitted instance to crypto-shred through its owning manager's termination — a synchronous, per-manager shred, returning the number drained. One of the maintenance passes (the built-in runner drives it by default); the host owns the cadence. |
 
 `IPendingErasureRequests.Backlog()` returns a `PendingBacklog(int Count, DateTimeOffset? OldestReceivedAt)` —
 the admitted-but-undrained depth and the oldest admit time (`null` when empty). It is a monitoring read, not the

@@ -14,9 +14,6 @@
     <PackageVersion Include="SoEx.Endpoint" Version="0.0.0-alpha-3.0" />
     <PackageVersion Include="SoEx.Hosting" Version="0.0.0-alpha-3.0" />
     <PackageVersion Include="SoEx.Transport.InProc" Version="0.0.0-alpha-3.0" />
-    <!-- Source generator: lifts a *.Manager.*.Interface assembly's interfaces into POST controllers
-         (Proxy.ForService dispatch). Used by the example web hosts to expose the trigger seam. -->
-    <PackageVersion Include="SoEx.Method.Generators.AspNetCore" Version="1.0.0-alpha-2.0" />
   </ItemGroup>
 
   <!-- Engine adapters: latest at first use (D5). -->

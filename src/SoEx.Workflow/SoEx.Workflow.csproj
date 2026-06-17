@@ -15,4 +15,11 @@
     <PackageReference Include="SoEx.Endpoint" />
   </ItemGroup>
 
+  <!-- The governed core builds on the two contract packages (authoring + persistence); the contract types
+       stay in the SoEx.Workflow namespace, so core code is unchanged. -->
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow.Abstractions/SoEx.Workflow.Abstractions.csproj" />
+    <ProjectReference Include="../SoEx.Workflow.Stores.Abstractions/SoEx.Workflow.Stores.Abstractions.csproj" />
+  </ItemGroup>
+
 </Project>

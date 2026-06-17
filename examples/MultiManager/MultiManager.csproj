@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
     <ProjectReference Include="..\..\src\SoEx.Method.Workflow\SoEx.Method.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Workflow.Runtime.InMemory\SoEx.Workflow.Runtime.InMemory.csproj" />
   </ItemGroup>
 
 </Project>

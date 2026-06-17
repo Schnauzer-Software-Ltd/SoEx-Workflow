@@ -20,7 +20,7 @@
     <ProjectReference Include="..\..\..\Access\Retention\Interface\PiiMaker.Access.Retention.Interface.csproj" />
     <ProjectReference Include="..\..\..\Engine\Subscription\Interface\PiiMaker.Engine.Subscription.Interface.csproj" />
     <ProjectReference Include="..\..\..\..\iFx\PiiMaker.iFx.csproj" />
-    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+    <ProjectReference Include="..\..\..\..\..\..\src\SoEx.Workflow.Abstractions\SoEx.Workflow.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>

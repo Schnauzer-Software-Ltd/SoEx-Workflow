@@ -12,3 +12,7 @@ __pycache__/
 
 # Rust (the Restate engine shell — primary); Cargo.lock IS committed (binary crate)
 target/
+
+.idea/
+
+.DS_Store

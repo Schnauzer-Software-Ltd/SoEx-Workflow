@@ -101,8 +101,9 @@ using Microsoft.Extensions.Hosting;
 using SoEx.Abstractions;
 using SoEx.Context;
 using SoEx.Hosting;
+using SoEx.Transport.Workflow;                              // WorkflowBinding / WorkflowListeners
 using SoEx.Workflow;
-using SoEx.Workflow.InMemory;
+using SoEx.Workflow.Runtime.InMemory;
 
 IInstanceKeyStore keys  = new InMemoryInstanceKeyStore();   // mints + destroys the per-instance key
 ISubjectIndex     index = new InMemorySubjectIndex();        // maps subjects → instances for erasure

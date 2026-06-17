@@ -82,7 +82,7 @@ public sealed class WorkflowUtility(
         return Task.FromResult(requestId);
     }
 
-    public async Task<int> DrainEraseRequestsAsync()
+    public async Task<long> DrainEraseRequestsAsync()
     {
         // One pass: drive each admitted request's instances to crypto-shred through the coordinator (the same
         // per-instance decision, per-manager shred, and held/open-request recording the request path uses), so
@@ -95,7 +95,7 @@ public sealed class WorkflowUtility(
         }
 
         ErasureCoordinator coordinator = Coordinator();
-        int drained = 0;
+        long drained = 0;
         foreach (PendingErasureRequest request in pending.Pending())
         {
             await coordinator.EraseInstancesAsync(
@@ -107,7 +107,7 @@ public sealed class WorkflowUtility(
         return drained;
     }
 
-    public async Task<int> SweepAbandonedAsync(int olderThanSeconds)
+    public async Task<long> SweepAbandonedAsync(long olderThanSeconds)
     {
         // The request-independent backstop (one pass): age the live key set and force-terminate instances
         // abandoned before their termination hook ran. The sweep logic is owned here; the host owns the cadence.
@@ -115,14 +115,14 @@ public sealed class WorkflowUtility(
         return report.Outcomes.Count;
     }
 
-    public async Task<int> ReDriveHeldAsync()
+    public async Task<long> ReDriveHeldAsync()
     {
         // One pass: audited retry of every quarantined instance's termination extraction.
         ErasureCoordinator.ReDriveReport report = await Coordinator().ReDriveHeldAsync(Target);
         return report.ReDriven;
     }
 
-    public async Task<int> ReviewDeadlinesAsync(int escalateWithinSeconds)
+    public async Task<long> ReviewDeadlinesAsync(long escalateWithinSeconds)
     {
         // One pass: force-terminate instances whose statutory deadline is at risk (trusted to self-erase but
         // still live within the window). Needs the request log; with none wired, there is nothing to review.

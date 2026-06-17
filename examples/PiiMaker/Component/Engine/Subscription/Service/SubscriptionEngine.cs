@@ -1,16 +1,6 @@
-using System.Collections.Concurrent;
 using PiiMaker.Engine.Subscription.Interface;
 
 namespace PiiMaker.Engine.Subscription.Service;
-
-/// <summary>Subscription state — a singleton on the engine component's host ServiceCollection.</summary>
-public sealed class SubscriptionStore
-{
-    public int Reservations;
-    public ConcurrentDictionary<string, string> Assigned { get; } = new();
-    public ConcurrentDictionary<string, byte> Released { get; } = new();
-    public ConcurrentDictionary<string, string> Cancelled { get; } = new();
-}
 
 /// <summary>In-memory <see cref="ISubscriptionEngine"/> component — records reservations/assignments via the injected store.</summary>
 public sealed class SubscriptionEngine(SubscriptionStore store) : ISubscriptionEngine

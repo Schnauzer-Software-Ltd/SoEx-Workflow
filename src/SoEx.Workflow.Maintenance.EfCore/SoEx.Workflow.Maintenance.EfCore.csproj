@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+    <ProjectReference Include="../SoEx.Workflow.Stores.Abstractions/SoEx.Workflow.Stores.Abstractions.csproj" />
     <!-- The bundled ErasureStores backs the subject index from the same database as the maintenance logs, so it
          composes the EF Core subject-index store and reuses its model mapping. Maintenance depends on the index
          (it operates on the indexed instances), so the dependency direction is correct. -->

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Runtime.InMemory</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Runtime.InMemory</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The in-process / null runtime: in-memory implementations of the governance stores plus the InProc
+       gateway and null workflow runtime. A peer of the durable runtime adapters (SoEx.Workflow.Runtime.*);
+       references only the governed core it implements. -->
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

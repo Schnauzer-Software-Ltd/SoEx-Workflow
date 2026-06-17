@@ -49,7 +49,7 @@ public static class ExampleEndpoints
         app.MapPost("/example/erase", async (EraseRequest r) =>
         {
             string requestId = await system.Workflow.RequestEraseAsync(r.Subject);
-            int drained = await system.Workflow.DrainEraseRequestsAsync();
+            long drained = await system.Workflow.DrainEraseRequestsAsync();
             return Results.Json(new { subject = r.Subject, requestId, drained });
         });
     }

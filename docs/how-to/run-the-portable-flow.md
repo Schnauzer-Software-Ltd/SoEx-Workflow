@@ -54,7 +54,7 @@ For durability, hand the same `(step, termination)` to the shipped builder for y
 | **Durable Task** | `DurableTaskWorkflowHost.Build(conn, step, termination)` → schedule `OrchestrationName` with `seed`; point `conn` at a Durable Task Scheduler |
 | **Temporal** | `TemporalWorkflowHost.BuildWorker(client, taskQueue, step, termination)` → a `TemporalWorker` on your connected cluster client (run it with `ExecuteAsync`; a fresh worker resumes server-persisted instances) |
 | **Elsa** | `ElsaWorkflowHost.BuildDurable(step, termination, configureElsa, configureServices?)` → supply your workflow(s) and a persistence provider (e.g. EF Core) in `configureElsa` |
-| **Restate** | `RestateWorkflowHost.Build(stepUrl, step, termination, authToken)` → the `/step`+`/terminate` callback host; the Rust `OnboardWorkflow` in the Restate sidecar drives it (see the [Restate adapter README](../../src/SoEx.Workflow.Restate/README.md)) |
+| **Restate** | `RestateWorkflowHost.Build(stepUrl, step, termination, authToken)` → the `/step`+`/terminate` callback host; the Rust `OnboardWorkflow` in the Restate sidecar drives it (see the [Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md)) |
 
 The governed `(step, termination)` is identical across all of them; only the host builder changes.
 

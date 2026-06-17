@@ -41,7 +41,8 @@ under it is unrecoverable.
 - `RetainingContext` — carries `IdempotencyKey` (the `(InstanceId, name, sequence)` triple), so your
   outward write can be made idempotent.
 - `TerminatedContext` — post-shred context for bookkeeping.
-- `RetentionHeldContext` — held-instance context for quarantine handling.
+- `RetentionHeldContext` — held-instance context for quarantine handling; its `LastError` is the scrubbed,
+  subject-free failure message (the same string the held log records), safe to log or alert on.
 
 ## See also
 
