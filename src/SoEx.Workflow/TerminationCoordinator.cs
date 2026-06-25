@@ -18,7 +18,7 @@ public sealed class TerminationCoordinator(
     IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null)
 {
     public async Task<TerminationOutcome> TerminateAsync(
-        string instanceId, IErasureEvents contracts, IdempotencyKey idempotencyKey, TerminationTrigger trigger)
+        string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey, TerminationTrigger trigger)
     {
         // Idempotent re-entry: if the key is already gone, a prior termination completed OnRetaining +
         // crypto-shred. Re-running would re-extract against an unreadable (shredded) payload, so treat
@@ -73,7 +73,7 @@ public sealed class TerminationCoordinator(
     }
 
     /// <summary>The audited human override: re-drive a held instance back into <c>OnRetaining</c>.</summary>
-    public Task<TerminationOutcome> ReDriveAsync(string instanceId, IErasureEvents contracts, IdempotencyKey idempotencyKey)
+    public Task<TerminationOutcome> ReDriveAsync(string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey)
         => TerminateAsync(instanceId, contracts, idempotencyKey, TerminationTrigger.ErasureRequest);
 
     // The held log is durable and survives the shred, so a raw exception message carrying a subject id would

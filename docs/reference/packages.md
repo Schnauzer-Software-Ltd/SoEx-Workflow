@@ -29,7 +29,7 @@ authoring package; a durable backend implements the persistence package. Both ke
 
 | Package | Ships |
 |---|---|
-| `SoEx.Workflow.Abstractions` | the authoring contracts a component compiles against: `WorkflowAction` (+ extensions), `IErasureEvents` + its contexts, `DeterministicInstanceId`, `IdempotencyKey` |
+| `SoEx.Workflow.Abstractions` | the authoring contracts a component compiles against: `WorkflowAction` (+ extensions), `IErasureEvent` + its contexts, `DeterministicInstanceId`, `IdempotencyKey` |
 | `SoEx.Workflow.Stores.Abstractions` | the persistence contracts a durable backend implements: `IInstanceKeyStore` / `ISubjectIndex` / `IIdempotencyStore`, the erasure-maintenance registries, and `ISubjectProtector` (+ `HmacSubjectProtector`). References `SoEx.Workflow.Abstractions` |
 
 ## Consumer-side utility (IDesign Method component)

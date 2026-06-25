@@ -4,7 +4,7 @@ namespace SoEx.Method.Workflow;
 
 /// <summary>
 /// Builds the per-instance erasure routing a multi-manager <see cref="WorkflowUtility"/> needs: given an
-/// instance id, which manager's <see cref="IErasureEvents"/> owns it. The framework's by-type proxy can name
+/// instance id, which manager's <see cref="IErasureEvent"/> owns it. The framework's by-type proxy can name
 /// only one contract, so when several managers share one utility the composition supplies this routing
 /// instead.
 /// <para>
@@ -33,11 +33,11 @@ public static class ErasureRouting
     }
 
     /// <summary>
-    /// A resolver that maps an instance id to the owning manager's <see cref="IErasureEvents"/> by its prefix.
+    /// A resolver that maps an instance id to the owning manager's <see cref="IErasureEvent"/> by its prefix.
     /// Pass the result as <c>resolveErasureFor</c> to <see cref="WorkflowUtility"/>. An unknown prefix yields
     /// <c>null</c> (the owner is unresolved; the coordinator surfaces it, never guesses).
     /// </summary>
-    public static Func<string, IErasureEvents?> ByPrefix(IReadOnlyDictionary<string, IErasureEvents> ownerByPrefix)
+    public static Func<string, IErasureEvent?> ByPrefix(IReadOnlyDictionary<string, IErasureEvent> ownerByPrefix)
     {
         ArgumentNullException.ThrowIfNull(ownerByPrefix);
         return instanceId => ownerByPrefix.GetValueOrDefault(PrefixOf(instanceId));

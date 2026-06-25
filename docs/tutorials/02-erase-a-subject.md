@@ -22,7 +22,7 @@ Replace the no-op `OnRetaining` in `OnboardManager` with one that records outwar
 in-memory store so we can print it later:
 
 ```csharp
-public sealed class OnboardManager : IOnboardManager, IErasureEvents
+public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
     public List<string> Retained { get; } = new();   // stands in for your own governed store
 

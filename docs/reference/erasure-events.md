@@ -3,14 +3,14 @@
 
 # Reference — erasure events
 
-A step component hosted on a workflow binding must implement `IErasureEvents`. The wiring enforces
-this via `WorkflowRegistration.RequireErasureEvents(...)`, an opt-in check that throws at wiring time
+A step component hosted on a workflow binding must implement `IErasureEvent`. The wiring enforces
+this via `WorkflowRegistration.RequireErasureEvent(...)`, an opt-in check that throws at wiring time
 (composition-root runtime) if the component doesn't implement it, rather than silently running a no-op
 termination. It is not a compile-time failure: `GovernedTermination` accepts null contracts, so the
-guarantee comes from calling `RequireErasureEvents(...)` at composition. Namespace: `SoEx.Workflow`.
+guarantee comes from calling `RequireErasureEvent(...)` at composition. Namespace: `SoEx.Workflow`.
 
 ```csharp
-public interface IErasureEvents
+public interface IErasureEvent
 {
     Task OnRetaining(RetainingContext context);
     Task OnTerminated(TerminatedContext context);

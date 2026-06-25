@@ -10,7 +10,7 @@ namespace SoEx.Method.Workflow;
 /// (start/raise-event/recover) and the <see cref="External.IWorkflowUtility"/> the host calls as a system client
 /// (erase/sweep). It holds the durable stores (key store, subject index — supplied on its ServiceCollection,
 /// read back by the host to wire the governed step/termination) and the host-wired <see cref="WorkflowSeam"/>.
-/// It reaches the entry component's erasure termination through the framework <see cref="IErasureEvents"/>
+/// It reaches the entry component's erasure termination through the framework <see cref="IErasureEvent"/>
 /// proxy via <see cref="SoEx.Proxy.ForService{I}"/> — a cross-subsystem call (the entry component is in another
 /// subsystem, possibly another host); it resolves from the same channel the host's termination uses, so the
 /// utility adds no second registration on that type.
@@ -18,7 +18,7 @@ namespace SoEx.Method.Workflow;
 /// When more than one entry component (manager) shares this one utility and runtime, each owns a distinct
 /// erasure termination, and the single by-type framework proxy can no longer name which one to drive. The
 /// optional <paramref name="resolveErasureFor"/> supplies that routing: given an instance id, it returns the
-/// owning manager's <see cref="IErasureEvents"/> (or <c>null</c> when the owner can't be resolved, which the
+/// owning manager's <see cref="IErasureEvent"/> (or <c>null</c> when the owner can't be resolved, which the
 /// coordinator surfaces rather than silently shredding against the wrong contract). When it is not supplied
 /// the utility keeps the single-manager behaviour, resolving the one framework proxy.
 /// </para>
@@ -29,7 +29,7 @@ public sealed class WorkflowUtility(
     ISubjectIndex index,
     IHeldInstanceRegistry? heldRegistry = null,
     IErasureRequestRegistry? requestRegistry = null,
-    Func<string, IErasureEvents?>? resolveErasureFor = null,
+    Func<string, IErasureEvent?>? resolveErasureFor = null,
     IPendingErasureRequests? pending = null)
     : SubSystem.IWorkflowUtility, External.IWorkflowUtility
 {
@@ -143,9 +143,9 @@ public sealed class WorkflowUtility(
     // surfaces as a not-erased outcome — never a silent drop and never a shred against the wrong contract.
     private ErasureTarget? Target(string instanceId)
     {
-        IErasureEvents? contracts = resolveErasureFor is not null
+        IErasureEvent? contracts = resolveErasureFor is not null
             ? resolveErasureFor(instanceId)
-            : SoEx.Proxy.ForService<IErasureEvents>();
+            : SoEx.Proxy.ForService<IErasureEvent>();
         return contracts is null
             ? null
             : new ErasureTarget(instanceId, contracts, new IdempotencyKey(instanceId, "terminal", 0), MaxRemainingDuration: null);

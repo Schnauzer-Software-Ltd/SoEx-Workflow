@@ -51,7 +51,7 @@ Exact signatures, packages, and per-runtime behavior.
 - [The governed core](reference/governed-core.md) — `GovernedStep`, `GovernedTermination`, `StepContext`,
   wiring.
 - [`WorkflowAction`](reference/workflow-action.md) — the portable-model vocabulary.
-- [Erasure events](reference/erasure-events.md) — `IErasureEvents` and its context types.
+- [Erasure events](reference/erasure-events.md) — `IErasureEvent` and its context types.
 - [Erasure API](reference/erasure-api.md) — `ErasureCoordinator`, the sweep, and maintenance.
 - [Governance services](reference/governance-services.md) — key store, subject index, idempotency store.
 - [Triggering](reference/triggering.md) — `IWorkflowGateway`, `WorkflowSealer`, `DeterministicInstanceId`.

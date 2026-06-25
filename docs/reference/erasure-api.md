@@ -39,7 +39,7 @@ public sealed record ErasureRequest(string RequestId, DateTimeOffset ReceivedAt,
 
 public sealed record ErasureTarget(
     string InstanceId,
-    IErasureEvents Contracts,
+    IErasureEvent Contracts,
     IdempotencyKey IdempotencyKey,
     TimeSpan? MaxRemainingDuration);   // null = unbounded → force-terminate
 
@@ -115,12 +115,12 @@ Durable state the passes need; in-memory defaults, with shipped RavenDB and EF C
 ## Multiple managers on one utility
 
 When several managers (distinct entrypoints) share one `WorkflowUtility`, each owns its own
-`IErasureEvents`, so the utility cannot drive every instance through a single contract. Supply the utility's
+`IErasureEvent`, so the utility cannot drive every instance through a single contract. Supply the utility's
 `resolveErasureFor` with a per-instance router; `ErasureRouting` (`SoEx.Method.Workflow`) builds one from the
 instance-id prefix:
 
 ```csharp
-Func<string, IErasureEvents?> routing = ErasureRouting.ByPrefix(new Dictionary<string, IErasureEvents>
+Func<string, IErasureEvent?> routing = ErasureRouting.ByPrefix(new Dictionary<string, IErasureEvent>
 {
     ["onboarding"] = onboardingErasure,   // instance ids minted as "onboarding-…"
     ["billing"]    = billingErasure,       // "billing-…"

@@ -144,7 +144,7 @@ the key, prune the subject index, then `OnTerminated` (or `OnRetentionHeld` on e
 **Erasure** — Forgetting a subject's data: extract any must-retain data, then crypto-shred so the rest
 is unrecoverable.
 
-**`IErasureEvents`** — The interface a workflow-hosted step component must implement (a deliberate
+**`IErasureEvent`** — The interface a workflow-hosted step component must implement (a deliberate
 opt-in; a no-op is an explicit choice). Its hooks are `OnRetaining`, `OnTerminated`, `OnRetentionHeld`.
 
 **`OnRetaining`** — Pre-shred extract; fires while the payload is still readable, on every termination path.

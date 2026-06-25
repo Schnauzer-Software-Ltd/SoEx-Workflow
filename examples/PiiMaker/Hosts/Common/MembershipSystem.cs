@@ -49,7 +49,7 @@ namespace PiiMaker.Hosting;
 /// <summary>
 /// Stands up the "membership" SoEx <see cref="Topology.System"/> and starts it: the Membership
 /// manager is the subsystem entry point (hosted on a <see cref="WorkflowBinding{I}"/> for the governed step,
-/// plus an <c>IErasureEvents</c> endpoint for the termination), proxying to the Engine and Access
+/// plus an <c>IErasureEvent</c> endpoint for the termination), proxying to the Engine and Access
 /// COMPONENTS through the in-proc transport. Each component's state is a singleton on its own host
 /// ServiceCollection. Returns the workflow dispatch + serializer the governed step needs, a system-resolved
 /// erasure-events proxy for the termination, and the retained-records store for observation.
@@ -58,7 +58,7 @@ namespace PiiMaker.Hosting;
 public static class MembershipSystem
 {
     public sealed record Composition(
-        IWorkflowDispatch NativeEndpoint, IWorkflowDispatch PortableEndpoint, IMessageSerializer Serializer, IErasureEvents Erasure, RetainedStore Retained,
+        IWorkflowDispatch NativeEndpoint, IWorkflowDispatch PortableEndpoint, IMessageSerializer Serializer, IErasureEvent Erasure, RetainedStore Retained,
         IMembershipManager Manager, WorkflowSeam Seam, BillingStore Billing, ILifetimeScope Scope,
         IInstanceKeyStore Keys, ISubjectIndex Index, IIdempotencyStore Idempotency, WfExternal.IWorkflowUtility Workflow,
         IHeldInstanceRegistry HeldLog);
@@ -160,9 +160,9 @@ public static class MembershipSystem
                             new WorkflowBinding<Native.IMembershipManager>(subSystem),
                             new WorkflowBinding<Portable.IMembershipManager>(subSystem),
                             // One erasure termination endpoint. Both the host (governed termination) and the utility
-                            // (sweep) reach it through the single IErasureEvents client below — no second
+                            // (sweep) reach it through the single IErasureEvent client below — no second
                             // registration on the type, so no aliasing and no per-caller contract split.
-                            new InProcBinding<IErasureEvents>(subSystem),
+                            new InProcBinding<IErasureEvent>(subSystem),
                             new InProcBinding<IMembershipManager>(subSystem),
                         ],
                         Proxies =
@@ -186,7 +186,7 @@ public static class MembershipSystem
                 // The Workflow utility subsystem: its entry point owns the durable workflow plumbing (stores +
                 // seam + erasure) and hosts two faces — External (host calls: erase/sweep) and SubSystem (the
                 // manager proxies in: start/raise-event). It reaches the membership manager's erasure termination through
-                // the shared system IErasureEvents client (visible in its container), so it declares no proxy.
+                // the shared system IErasureEvent client (visible in its container), so it declares no proxy.
                 new Topology.SubSystem
                 {
                     Name = workflowSub,
@@ -206,7 +206,7 @@ public static class MembershipSystem
             ],
             Clients =
             [
-                new Topology.Client<IErasureEvents> { SubSystem = subSystem, Service = new InProcBinding<IErasureEvents>(subSystem) },
+                new Topology.Client<IErasureEvent> { SubSystem = subSystem, Service = new InProcBinding<IErasureEvent>(subSystem) },
                 new Topology.Client<WfExternal.IWorkflowUtility> { SubSystem = workflowSub, Service = new InProcBinding<WfExternal.IWorkflowUtility>(workflowSub) },
                 new Topology.Client<IMembershipManager> { SubSystem = subSystem, Service = new InProcBinding<IMembershipManager>(subSystem) },
             ],
@@ -219,7 +219,7 @@ public static class MembershipSystem
         IWorkflowDispatch nativeEndpoint = listeners.ForAddress(new WorkflowBinding<Native.IMembershipManager>(subSystem).Transport.Address);
         IWorkflowDispatch portableEndpoint = listeners.ForAddress(new WorkflowBinding<Portable.IMembershipManager>(subSystem).Transport.Address);
         var serializer = host.Services.GetRequiredService<IMessageSerializer>();
-        var erasure = host.Services.GetRequiredService<IErasureEvents>();
+        var erasure = host.Services.GetRequiredService<IErasureEvent>();
         var entry = host.Services.GetRequiredService<IMembershipManager>();
         WfExternal.IWorkflowUtility workflow = host.Services.GetRequiredService<WfExternal.IWorkflowUtility>();
         // The Autofac root scope where the IMembershipEntry client proxy is registered. The web host sets

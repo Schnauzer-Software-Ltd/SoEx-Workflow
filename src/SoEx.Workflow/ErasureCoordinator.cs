@@ -8,7 +8,7 @@ namespace SoEx.Workflow;
 /// </summary>
 public sealed record ErasureTarget(
     string InstanceId,
-    IErasureEvents Contracts,
+    IErasureEvent Contracts,
     IdempotencyKey IdempotencyKey,
     TimeSpan? MaxRemainingDuration);
 

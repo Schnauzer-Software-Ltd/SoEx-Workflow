@@ -16,7 +16,7 @@ namespace PiiMaker.Manager.Membership.Service;
 /// host singleton, constructor-injected.
 /// <para>The class is split across three files by the contract each part serves: this file is the inbound
 /// trigger seam (<see cref="Interface.IMembershipManager"/>) and the erasure contract
-/// (<see cref="IErasureEvents"/>); <c>MembershipManagerPortable</c> implements the portable flow operations
+/// (<see cref="IErasureEvent"/>); <c>MembershipManagerPortable</c> implements the portable flow operations
 /// (<see cref="Interface.Portable.IMembershipManager"/>, returning a <see cref="WorkflowAction"/>); and
 /// <c>MembershipManagerNative</c> implements the native single-step operations
 /// (<see cref="Interface.Native.IMembershipManager"/>, returning a PII-free <see cref="StepReceipt"/>). The
@@ -27,7 +27,7 @@ namespace PiiMaker.Manager.Membership.Service;
 /// — the manager stays pure business logic and delegates with business identity + an opaque first step.</para>
 /// </summary>
 public sealed partial class MembershipManager(MembershipPolicy policy, InstanceIdSecret instanceIdSecret)
-    : Interface.IMembershipManager, IErasureEvents
+    : Interface.IMembershipManager, IErasureEvent
 {
     // ---- Inbound triggers (IMembershipManager): start a flow / continue a waiting one ------------
     // The manager derives the PII-free instance id and delegates the durable work — sealing, starting,

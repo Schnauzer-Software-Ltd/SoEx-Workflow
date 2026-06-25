@@ -57,7 +57,7 @@ index → `OnTerminated`, or → `OnRetentionHeld` on extraction failure.
 
 ```csharp
 public GovernedTermination(
-    IErasureEvents? contracts,
+    IErasureEvent? contracts,
     IInstanceKeyStore keys,
     ISubjectIndex index,
     IHeldInstanceRegistry? heldRegistry = null);
@@ -91,7 +91,7 @@ The framework-understood facts of a step, extracted from the envelope without in
 |---|---|
 | `WorkflowBinding<I>(string name)` | An ordinary SoEx binding that hosts your step component; put it in your topology. |
 | `WorkflowListeners` | Collects endpoints as the host starts; `ForAddress(binding.Transport.Address)` returns the bound `IWorkflowDispatch`. |
-| `WorkflowRegistration.RequireErasureEvents(Type)` | Throws at wiring time if the component doesn't implement `IErasureEvents`. |
+| `WorkflowRegistration.RequireErasureEvent(Type)` | Throws at wiring time if the component doesn't implement `IErasureEvent`. |
 | `WorkflowEnvelope.AmbientFor(IMessageSerializer, SubjectContext?)` | Builds the ambient bytes carrying a subject. Returns `byte[]?`. |
 
 ## The wiring sequence
@@ -123,7 +123,7 @@ host.Start();                                                          // endpoi
 IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address);   // resolve AFTER Start
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
-WorkflowRegistration.RequireErasureEvents(component.GetType());
+WorkflowRegistration.RequireErasureEvent(component.GetType());
 var step     = new GovernedStep<IOnboardSteps>(endpoint, serializer, idem, keys, index);
 var termination = new GovernedTermination(component, keys, index);
 ```
@@ -135,5 +135,5 @@ included); the private test suite wraps exactly this into a helper that returns 
 
 - [Governance services](governance-services.md) — `IInstanceKeyStore`, `ISubjectIndex`,
   `IIdempotencyStore`.
-- [Erasure events](erasure-events.md) — `IErasureEvents` and its context types.
+- [Erasure events](erasure-events.md) — `IErasureEvent` and its context types.
 - [`WorkflowAction`](workflow-action.md) — the portable-model return value.

@@ -7,13 +7,13 @@ public enum TerminationTrigger
     ErasureRequest,
 }
 
-/// <summary>Passed to <see cref="IErasureEvents.OnRetaining"/> while the key is still live.</summary>
+/// <summary>Passed to <see cref="IErasureEvent.OnRetaining"/> while the key is still live.</summary>
 public sealed record RetainingContext(string InstanceId, IdempotencyKey IdempotencyKey, TerminationTrigger Trigger);
 
-/// <summary>Passed to <see cref="IErasureEvents.OnTerminated"/> after the key is destroyed. PII-free.</summary>
+/// <summary>Passed to <see cref="IErasureEvent.OnTerminated"/> after the key is destroyed. PII-free.</summary>
 public sealed record TerminatedContext(string InstanceId);
 
-/// <summary>Passed to <see cref="IErasureEvents.OnRetentionHeld"/> when extraction has failed past retry.
+/// <summary>Passed to <see cref="IErasureEvent.OnRetentionHeld"/> when extraction has failed past retry.
 /// <paramref name="LastError"/> is the scrubbed failure message (the same subject-free string the held log
 /// records), not the live exception — so it crosses the subsystem boundary and carries no PII past the shred.</summary>
 public sealed record RetentionHeldContext(string InstanceId, int Attempts, string LastError);
@@ -25,7 +25,7 @@ public sealed record RetentionHeldContext(string InstanceId, int Attempts, strin
 /// on the first and third is two faces of one retention obligation; <i>Terminated</i>
 /// means the lifecycle actually finished.
 /// </summary>
-public interface IErasureEvents
+public interface IErasureEvent
 {
     /// <summary>
     /// Pre-shred extract. Fires on every termination path (natural completion and

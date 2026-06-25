@@ -44,7 +44,7 @@ internal class Program
 
         // The routing: the utility resolves the owning manager per instance from the instance-id prefix. With
         // one manager this would be the single framework proxy; with several, this map names the owner.
-        var routing = ErasureRouting.ByPrefix(new Dictionary<string, IErasureEvents>
+        var routing = ErasureRouting.ByPrefix(new Dictionary<string, IErasureEvent>
         {
             ["onboarding"] = onboarding,
             ["billing"] = billing,

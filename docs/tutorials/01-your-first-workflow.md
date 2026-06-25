@@ -69,7 +69,7 @@ public interface IOnboardManager
     Task<WorkflowAction> Run(OnboardStep step);
 }
 
-public sealed class OnboardManager : IOnboardManager, IErasureEvents
+public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
     public Task<WorkflowAction> Run(OnboardStep step) => Task.FromResult<WorkflowAction>(step switch
     {
@@ -129,7 +129,7 @@ host.Start();
 IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address);
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
-WorkflowRegistration.RequireErasureEvents(component.GetType());   // fail fast if you forgot the contracts
+WorkflowRegistration.RequireErasureEvent(component.GetType());   // fail fast if you forgot the contracts
 var step     = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
 var termination = new GovernedTermination(component, keys, index);
 ```

@@ -43,7 +43,7 @@ public interface IOnboardSteps
     // (portable model: Task<WorkflowAction> Run(OnboardStep step); — everything else is identical)
 }
 
-public sealed class OnboardSteps : IOnboardSteps, IErasureEvents
+public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
 {
     public Task<StepOutcome> Run(OnboardStep step)
     {
@@ -52,7 +52,7 @@ public sealed class OnboardSteps : IOnboardSteps, IErasureEvents
         return Task.FromResult(new StepOutcome(step.GetType().Name, Effect: 1));
     }
 
-    // … IErasureEvents (step 4) …
+    // … IErasureEvent (step 4) …
 }
 ```
 
@@ -74,13 +74,13 @@ Subjects are additive; a later step may name more.
 
 ## 4. Implement the erasure events
 
-A component hosted on a workflow binding must implement `IErasureEvents`. This is a deliberate opt-in:
-the wiring calls `WorkflowRegistration.RequireErasureEvents(...)`, so forgetting the declaration throws
+A component hosted on a workflow binding must implement `IErasureEvent`. This is a deliberate opt-in:
+the wiring calls `WorkflowRegistration.RequireErasureEvent(...)`, so forgetting the declaration throws
 at wiring time (composition-root runtime) rather than silently running a no-op termination. Note that
 it is not a compile-time failure; the check runs when you compose the host.
 
 ```csharp
-public sealed class OnboardSteps : IOnboardSteps, IErasureEvents
+public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
 {
     // … Run(OnboardStep) …
 

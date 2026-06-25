@@ -12,7 +12,7 @@ dotnet run --project examples/MultiManager
 
 - **Multi-manager routing.** Two managers (Onboarding and Billing) share one utility's stores. The utility
   resolves each instance's owning manager from the instance-id prefix (`ErasureRouting.ByPrefix`) and drives
-  erasure through that manager's `IErasureEvents` — so each manager only ever handles its own instances.
+  erasure through that manager's `IErasureEvent` — so each manager only ever handles its own instances.
 - **An asynchronous, durable front door.** `RequestEraseAsync` admits the request and returns immediately;
   a later `DrainEraseRequestsAsync` pass runs the erasure. The caller is never blocked for the shred, which is
   a statutory-deadline job, not a synchronous SLA.

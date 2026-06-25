@@ -9,15 +9,15 @@ public static class WorkflowRegistration
     /// compile time when an entrypoint declares it; this catches an entrypoint that omits
     /// the declaration entirely.)
     /// </summary>
-    public static void RequireErasureEvents(Type managerType)
+    public static void RequireErasureEvent(Type managerType)
     {
         ArgumentNullException.ThrowIfNull(managerType);
 
-        if (!typeof(IErasureEvents).IsAssignableFrom(managerType))
+        if (!typeof(IErasureEvent).IsAssignableFrom(managerType))
         {
             throw new InvalidOperationException(
                 $"'{managerType.Name}' is hosted on a workflow binding and must implement " +
-                "IErasureEvents (OnRetaining / OnTerminated / OnRetentionHeld); " +
+                "IErasureEvent (OnRetaining / OnTerminated / OnRetentionHeld); " +
                 "a deliberate no-op must be written explicitly.");
         }
     }

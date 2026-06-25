@@ -5,7 +5,7 @@ using SoEx.Workflow;
 // instance's still-live payload in OnRetaining (the must-retain carve-out point) and records that it
 // handled that instance — so we can show each manager only ever drives its own instances.
 internal sealed class DemoManager(string name, IInstanceKeyStore keys, IReadOnlyDictionary<string, byte[]> sealedPayloads)
-    : IErasureEvents
+    : IErasureEvent
 {
     public List<string> Retained { get; } = [];
 

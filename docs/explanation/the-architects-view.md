@@ -27,7 +27,7 @@ constructor injection. It reaches it as a SoEx proxy, a cross-subsystem call res
 ```
 membership.Manager  ──proxy──▶  membership-workflow.WorkflowUtility   (start / raise event / recover subjects)
         ▲                                      │
-        └──────────── proxy (IErasureEvents) ◀─┘   (drive crypto-shred back into your entrypoint)
+        └──────────── proxy (IErasureEvent) ◀─┘   (drive crypto-shred back into your entrypoint)
 ```
 
 This keeps the Method's closed architecture intact: the call goes across through the framework, never
@@ -82,7 +82,7 @@ The trade-off (backend expressiveness vs one component everywhere) is the subjec
 
 ## Right-to-erasure is a contract your entrypoint implements
 
-Your entrypoint implements `IErasureEvents`: `OnRetaining` to extract must-retain data, `OnTerminated`
+Your entrypoint implements `IErasureEvent`: `OnRetaining` to extract must-retain data, `OnTerminated`
 for post-shred bookkeeping, `OnRetentionHeld` for the extraction-failure quarantine. The utility drives
 crypto-shred through it at the end of every instance, and the `External` face turns "forget subject S"
 into a single system operation your host schedules. Erasure is therefore one mechanism, owned by the

@@ -151,7 +151,7 @@ once in `PiiMaker/Hosts/Common` (`PiiMaker.Hosting.MembershipWebHost`); the stat
   the governed step/termination onto a runtime differs.
 - Governance is built in: the subject is `SubjectContext.Managed(email)`; results and event names are
   PII-free by construction; must-retain PII is written outward in `OnRetaining` via the Retention
-  component, never returned. (`MembershipManager` implements `IErasureEvents`; the termination invokes
+  component, never returned. (`MembershipManager` implements `IErasureEvent`; the termination invokes
   it through a system-resolved proxy.)
 
 ### The flows (the governed-step operations)
@@ -164,7 +164,7 @@ The portable operations live on `Portable.IMembershipManager`, the native single
 | **A Onboarding** | `Onboard` (portable + native) | wait-for-event + timeout→compensation, idempotent assign, termination shred |
 | **B Subscription** | `Renew` (portable + native) | continue-as-new across renewal periods, dunning (backoff + payment-updated wait), cancel |
 | **C Offboarding** | `Offboard` (native-only) | parallel revocation fan-out, archive-in-`OnRetaining`, quarantine on archive failure |
-| **D Erasure** | (no op — `IErasureEvents` + `ErasureCoordinator`) | "forget subject S" sweep over A/B/C instances |
+| **D Erasure** | (no op — `IErasureEvent` + `ErasureCoordinator`) | "forget subject S" sweep over A/B/C instances |
 
 ### Triggering from outside (`IMembershipManager`)
 
