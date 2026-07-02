@@ -83,6 +83,27 @@ Practical consequences:
 - For single-active start on Zeebe, use `StartByMessageAsync` (TTL-bounded broker dedup); plain `StartAsync`
   has no duplicate-start protection, so start from a `DeterministicInstanceId` and gate re-entry at the seam.
 
+## In-flight evolution
+
+What happens to instances that were already running when you redeploy a changed flow. The full reasoning
+and the store-free pin-and-drain pattern are in [Versioning and evolution](../explanation/versioning-and-evolution.md);
+this is the per-runtime summary.
+
+| Runtime | Portable flow | Native flow | Tool for a breaking change |
+|---|---|---|---|
+| InProc | no durability across a restart, so no in-flight question | — | not applicable |
+| Durable Task | safe (step is an activity); in-flight instances roll forward | orchestrator is replayed, no in-code patch API | new orchestration name for the new version; drain the old |
+| Temporal | safe (step is an activity); in-flight instances roll forward | `[Workflow]` is replayed; a control-flow change can throw a non-determinism error | `Workflow.Patched` / `GetVersion`, or Worker Build-ID versioning |
+| Elsa | definitions versioned natively; running instances stay pinned | ← same | publish a new definition version; pin a specific version to hold new starts back |
+| Restate | deployments versioned natively; in-flight invocations stay pinned | ← same | deploy a new sidecar deployment |
+| Camunda 8 / Zeebe | — (native-only) | BPMN definitions versioned natively; running instances stay pinned | new BPMN version, or Camunda process-instance migration |
+
+The portable flow rolls forward everywhere it runs, because your step code is off the replay path, so a
+backward-compatible change needs only a redeploy. Where you need old instances never to meet new code,
+give the new version its own instance-id space with a version token in the `DeterministicInstanceId`
+prefix and drain the old one. See [Evolve a running flow](../how-to/evolve-a-running-flow.md) for the
+recipe.
+
 ## Verifying locally
 
 Each runtime is exercised against its backend, so full verification depends on those backends being
@@ -105,3 +126,5 @@ For the full setup and the timing traps that otherwise produce false results, se
 
 - [Triggering reference](triggering.md) — the gateway, sealer, and id types.
 - [Author a native flow](../how-to/author-a-native-flow.md) — the per-runtime recipes.
+- [Versioning and evolution](../explanation/versioning-and-evolution.md) — the reasoning behind the
+  in-flight evolution summary above.

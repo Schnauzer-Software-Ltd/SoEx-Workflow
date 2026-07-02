@@ -29,6 +29,8 @@ Task-oriented recipes. Each answers a single "how do I…?" and assumes you've d
 - [Run the portable flow](how-to/run-the-portable-flow.md) — host one component on InProc, Durable
   Task, Temporal, Elsa, or Restate.
 - [Author a native flow](how-to/author-a-native-flow.md) — author the flow in each runtime's own model.
+- [Evolve a running flow](how-to/evolve-a-running-flow.md) — change a flow that has live instances without
+  breaking them mid-flight.
 - [Trigger flows from outside](how-to/trigger-flows-from-outside.md) — start and raise events on a flow
   from a webhook that holds only business identity.
 - [Authorize the gateway seam](how-to/authorize-the-gateway-seam.md) — enforce auth at the trigger
@@ -78,3 +80,5 @@ The reasoning behind the design.
   endpoint, and the authorization chokepoint.
 - [Runtimes and durability](explanation/runtimes-and-durability.md) — the four durability models and
   why the runtimes don't all behave the same.
+- [Versioning and evolution](explanation/versioning-and-evolution.md) — what happens to in-flight
+  instances when you change a flow and redeploy, on each runtime.
