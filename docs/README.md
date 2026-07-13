@@ -37,6 +37,8 @@ Task-oriented recipes. Each answers a single "how do I…?" and assumes you've d
   chokepoint and make instance ids unguessable.
 - [Make crypto-shred durable](how-to/make-crypto-shred-durable.md) — swap in a production key store,
   subject index, and idempotency store.
+- [Operate in production](how-to/operate-in-production.md) — the metrics to wire, what to alert on, and how to
+  recover a held instance.
 - [Run erasure maintenance](how-to/run-erasure-maintenance.md) — the sweep, held re-drive, and deadline
   review that close the gaps over time.
 - [Customize PII detection](how-to/customize-pii-detection.md) — plug in a stricter subject matcher.

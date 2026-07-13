@@ -120,6 +120,13 @@ waits are bookmarks, and the flow ends in `GovernedTerminationActivity`. For a d
 `GovernedStep`/`GovernedTermination` from DI inside the activities so a rehydrated instance on a fresh
 host gets them.
 
+> Native-flow variables need `.WithWorkflowStorage()` in your Elsa registration for the flow's own variables
+> to persist and rehydrate across a suspend/resume; without it a native Elsa flow that carries state between
+> steps loses it on resume. (The framework's two governed variables — the sealed seed and the PII-free
+> instance id — ride as workflow input; this is about *your* flow's variables.) Elsa production persistence is
+> your choice — the Tier-2 story runs over SQLite, but a real deployment configures Elsa's EF Core / other
+> persistence provider.
+
 ```csharp
 var workflow = new Workflow
 {

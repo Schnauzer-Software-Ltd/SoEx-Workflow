@@ -20,7 +20,14 @@ public sealed class WorkflowOrchestration
     // code one at a time and in the same order on every replay, so this set rebuilds deterministically.
     private readonly HashSet<string> _handledRaiseIds = new();
 
-    private static readonly ActivityOptions ActivityOptions = new() { StartToCloseTimeout = TimeSpan.FromMinutes(1) };
+    // The step activity now carries a BOUNDED retry policy mapped from the cross-runtime step options — the old
+    // options had no RetryPolicy, so the server default retried a failing step forever, silently. When the
+    // bounded attempts are spent the activity throws and the catch below parks the instance (park-before-shred).
+    private static readonly ActivityOptions ActivityOptions = new()
+    {
+        StartToCloseTimeout = WorkflowStepOptions.Default.StepTimeout ?? TimeSpan.FromMinutes(1),
+        RetryPolicy = TemporalStepOptions.RetryPolicyFrom(WorkflowStepOptions.Default),
+    };
 
     // The termination-on-failure path runs under a detached cancellation token: when a workflow is cancelled the
     // workflow's own CancellationToken is already cancelled, so an activity bound to it would be cancelled
@@ -74,11 +81,31 @@ public sealed class WorkflowOrchestration
         }
         catch (Exception ex) when (ex is not ContinueAsNewException)
         {
-            // A failed or cancelled portable instance still owes the crypto-shred — the termination is "completion,
-            // cancellation, or erasure". continue-as-new throws its own control-flow exception (excluded here) so
-            // a fresh generation keeps its key; a Complete already shredded so this is an idempotent no-op.
-            await Wf.ExecuteActivityAsync(
-                (WorkflowActivities a) => a.Terminate(new TerminateInput(sequence)), TerminationOnFailureOptions);
+            // Cancellation/erasure vs step failure split the termination path. A cooperative cancellation (the
+            // erasure path cancels the workflow) still crypto-shreds — the deliberate erasure. A STEP failure
+            // that exhausted its bounded retries is instead PARKED with its key retained (park-before-shred): a
+            // transient blip must not destroy the sealed journal. continue-as-new throws its own control-flow
+            // exception (excluded here) so a fresh generation keeps its key; a Complete already shredded, so both
+            // paths are idempotent no-ops. Both run under the detached cancellation token so the activity survives
+            // the workflow's own cancellation.
+            //
+            // The workflow's own cancellation token is the authoritative, replay-safe signal that this is a
+            // cancellation rather than a step failure — the exception the cancelled await surfaces varies, but the
+            // token state is recorded in history and reconstructs identically on replay. A step failure leaves the
+            // token unset, so it routes to park.
+            if (Wf.CancellationToken.IsCancellationRequested)
+            {
+                await Wf.ExecuteActivityAsync(
+                    (WorkflowActivities a) => a.Terminate(new TerminateInput(sequence)), TerminationOnFailureOptions);
+            }
+            else
+            {
+                await Wf.ExecuteActivityAsync(
+                    (WorkflowActivities a) => a.Quarantine(
+                        new QuarantineInput(sequence, WorkflowStepOptions.Default.EffectiveMaxAttempts, ex.Message)),
+                    TerminationOnFailureOptions);
+            }
+
             throw;
         }
     }

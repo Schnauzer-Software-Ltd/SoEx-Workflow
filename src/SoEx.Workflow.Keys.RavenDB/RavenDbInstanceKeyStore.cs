@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Org.BouncyCastle.Crypto;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Operations.CompareExchange;
 
@@ -157,6 +158,13 @@ public sealed class RavenDbInstanceKeyStore : IEnumerableInstanceKeyStore
         try
         {
             return AesGcmEnvelope.Open(dek, ciphertext, Aad(instanceId));
+        }
+        catch (InvalidCipherTextException e)
+        {
+            // A present key that cannot open this envelope is a crypto rejection (wrong instance / forged /
+            // corrupt ciphertext). Surface the same CryptographicException the in-memory and OpenBao stores
+            // raise, not the Bouncy-Castle-specific type, so the cross-store decrypt contract is uniform.
+            throw new CryptographicException($"the envelope did not decrypt under instance '{instanceId}'s key", e);
         }
         finally
         {

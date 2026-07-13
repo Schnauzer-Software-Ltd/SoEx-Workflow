@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
@@ -41,6 +42,12 @@ public sealed class OpenBaoInstanceKeyStore : IEnumerableInstanceKeyStore
 
     private readonly IVaultClient _client;
     private readonly string _mountPoint;
+
+    // Mint time is immutable (the Transit key's creation_time is set once), so cache it per instance: the sweep's
+    // LiveInstances then costs one LIST plus a per-key read only for instances it has not seen before, instead of
+    // one synchronous read PER key on EVERY pass. Pruned on Destroy; an out-of-band delete leaves a harmless
+    // unused entry (it never reappears in the LIST).
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _mintedAtCache = new();
 
     /// <param name="address">The OpenBao server address, e.g. <c>https://openbao:8200</c>.</param>
     /// <param name="token">A token with rights on the Transit mount.</param>
@@ -115,6 +122,7 @@ public sealed class OpenBaoInstanceKeyStore : IEnumerableInstanceKeyStore
             new UpdateKeyRequestOptions { DeletionAllowed = true },
             _mountPoint));
         Block(() => _client.V1.Secrets.Transit.DeleteEncryptionKeyAsync(Name(instanceId), _mountPoint));
+        _mintedAtCache.TryRemove(instanceId, out _); // the instance is gone; drop its cached mint time.
     }
 
     public byte[] Encrypt(string instanceId, byte[] plaintext)
@@ -181,9 +189,12 @@ public sealed class OpenBaoInstanceKeyStore : IEnumerableInstanceKeyStore
                 continue; // not ours (shared mount) — ignore.
             }
 
-            Secret<EncryptionKeyInfo> info =
-                Block(() => _client.V1.Secrets.Transit.ReadEncryptionKeyAsync(name, _mountPoint));
-            live.Add(new LiveInstance(InstanceIdFromName(name), MintedAt(info.Data)));
+            string instanceId = InstanceIdFromName(name);
+            // Cached after the first read: mint time is immutable, so steady-state sweeps issue only the LIST
+            // above plus a read for genuinely new instances — not one read per key per pass.
+            DateTimeOffset mintedAt = _mintedAtCache.GetOrAdd(
+                instanceId, _ => MintedAt(Block(() => _client.V1.Secrets.Transit.ReadEncryptionKeyAsync(name, _mountPoint)).Data));
+            live.Add(new LiveInstance(instanceId, mintedAt));
         }
 
         return live;

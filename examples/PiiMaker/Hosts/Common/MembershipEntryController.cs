@@ -22,9 +22,23 @@ public sealed class IMembershipManagerController : Controller
     private static IMembershipManager Entry() => PiiMaker.iFx.Proxy.Proxy.ForService<IMembershipManager>();
 
     [HttpPost]
-    public async Task<ActionResult<string>> Trigger([FromBody] TriggerBase trigger)
+    public async Task<IActionResult> Trigger([FromBody] TriggerBase trigger)
     {
-        string instanceId = await Entry().Trigger(trigger);
-        return Json(instanceId);
+        TriggerResult result = await Entry().Trigger(trigger);
+
+        // A deduplicated start is a meaningful outcome, not a fault: answer 409 with a message the caller can
+        // show, instead of letting the backend's raw "already started" error surface as a 500. The instance id
+        // is PII-free by construction, so it is safe to name. Bumping the trigger's attempt starts a new run.
+        if (result.AlreadyStarted)
+        {
+            return Conflict(new
+            {
+                error = $"already started — a run already owns instance '{result.InstanceId}'. "
+                    + "Bump the attempt to start a new run for this identity.",
+                instanceId = result.InstanceId,
+            });
+        }
+
+        return Json(result.InstanceId);
     }
 }

@@ -43,49 +43,58 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
     // never part of anything journaled. (The example falls back to a fixed secret so it runs with no setup; a
     // real deployment loads it from configuration or a secret store.)
 
-    public async Task<string> Trigger(TriggerBase trigger)
+    public async Task<TriggerResult> Trigger(TriggerBase trigger)
     {
         WfSubSystem.IWorkflowUtility utility = Proxy.ForService<WfSubSystem.IWorkflowUtility>();
+
+        // A start reports whether it began a run or hit an id a run already owns; an event never starts, so it
+        // always reports "not a duplicate". Both carry the id back so the caller can echo/track it.
+        static TriggerResult Started(string id, WfSubSystem.StartOutcome outcome) =>
+            new(id, outcome.AlreadyExists);
+        static TriggerResult Raised(string id) => new(id, AlreadyStarted: false);
+
         switch (trigger)
         {
             case TriggerBase.StartOnboarding t:
             {
-                string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "onboard", t.OrgId, t.Email);
-                await utility.StartAsync(
-                    "onboard", id, t.Email, new OnboardCommand.LookupUser(t.OrgId, t.Email, t.Offer));
-                return id;
+                // Attempt folds into the identity so a bumped attempt is a distinct run for the same org+email —
+                // the supported way to re-onboard a subject whose earlier run still exists (see the restart note).
+                string id = DeterministicInstanceId.Keyed(
+                    instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
+                return Started(id, await utility.StartAsync(
+                    "onboard", id, t.Email, new OnboardCommand.LookupUser(t.OrgId, t.Email, t.Offer)));
             }
             case TriggerBase.AccountVerified t:
             {
-                string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "onboard", t.OrgId, t.Email);
+                string id = DeterministicInstanceId.Keyed(
+                    instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
                 await utility.RaiseEventAsync("onboard", id, "account-verified");
-                return id;
+                return Raised(id);
             }
             case TriggerBase.InviteAccepted t:
             {
-                string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "onboard", t.OrgId, t.Email);
+                string id = DeterministicInstanceId.Keyed(
+                    instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
                 await utility.RaiseEventAsync("onboard", id, "invite-accepted");
-                return id;
+                return Raised(id);
             }
             case TriggerBase.StartRenewal t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "renew", t.SubscriberId);
-                await utility.StartAsync(
-                    "renew", id, t.SubscriberId, new RenewCommand.Charge(t.SubscriberId, 1));
-                return id;
+                return Started(id, await utility.StartAsync(
+                    "renew", id, t.SubscriberId, new RenewCommand.Charge(t.SubscriberId, 1)));
             }
             case TriggerBase.PaymentUpdated t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "renew", t.SubscriberId);
                 await utility.RaiseEventAsync("renew", id, "payment-updated");
-                return id;
+                return Raised(id);
             }
             case TriggerBase.StartOffboarding t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "offboard", t.SubjectId);
-                await utility.StartAsync(
-                    "offboard", id, t.SubjectId, new OffboardCommand.Revoke(t.SubjectId, "*"));
-                return id;
+                return Started(id, await utility.StartAsync(
+                    "offboard", id, t.SubjectId, new OffboardCommand.Revoke(t.SubjectId, "*")));
             }
             default:
                 throw new ArgumentOutOfRangeException(nameof(trigger));

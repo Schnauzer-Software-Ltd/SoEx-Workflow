@@ -38,6 +38,16 @@ already run RavenDB and want the key liveness co-located with your data.
 > batch of shreds call `RavenDbInstanceKeyStore.RotateKek`, which retires the old KEK so keys captured
 > in older snapshots become permanently unwrappable. Background:
 > [Crypto-shred and erasure](../explanation/crypto-shred-and-erasure.md#the-key-stores-own-backups).
+>
+> The two stores differ in how far the framework can help. RavenDB keys are wrapped under a client-held
+> master KEK, so `RotateKek` gives you an in-band defeat of a captured snapshot. **OpenBao keys are
+> server-side and there is no client KEK to rotate** — a restored pre-destroy storage snapshot resurrects
+> the Transit key, and nothing in the client can undo that. So on OpenBao the shred's finality is bounded
+> by an operating condition you must own as an SLO: snapshot/backup retention shorter than your erasure
+> deadline, and unseal-key custody that prevents an unauthorized restore. Treat it as a hard requirement,
+> not a nice-to-have — if a snapshot can outlive the erasure window, the shred is only as final as your
+> retention policy. (RavenDB's `RotateKek` defeat is proven end-to-end in the test suite; the OpenBao
+> restore path is inherently server-side and is verified operationally, not by the suite.)
 
 ## Swap the subject index
 

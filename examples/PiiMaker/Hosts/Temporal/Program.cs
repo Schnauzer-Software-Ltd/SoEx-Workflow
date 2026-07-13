@@ -40,7 +40,7 @@ internal class Program
         // Onboarding + renewal drive the PORTABLE contract; offboarding's fan-out drives the NATIVE one. Each
         // governed step binds the seam (and endpoint) of the contract that owns its operation.
         GovernedStep<Portable.IMembershipManager> PortableStep(string op) => new(system.PortableEndpoint, system.Serializer, idempotency, keys, index, op);
-        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op);
+        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op, clearJournalResult: true);   // native result = PII-free StepReceipt
 
         var onboardStep = PortableStep(nameof(Portable.IMembershipManager.Onboard));
         var renewStep = PortableStep(nameof(Portable.IMembershipManager.Renew));
@@ -71,9 +71,10 @@ internal class Program
 
         // Wire the workflow seam: portable onboarding + renewal via the generic gateway, native offboarding via a
         // gateway that starts the consumer-authored fan-out workflow. This is the only runtime-specific wiring.
-        system.Seam.Connect("onboard", new TemporalWorkflowGateway(client, onboardQ),
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
+        system.Seam.Connect("onboard", new TemporalWorkflowGateway(client, onboardQ, guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard)), system.Serializer);
-        system.Seam.Connect("renew", new TemporalWorkflowGateway(client, renewQ),
+        system.Seam.Connect("renew", new TemporalWorkflowGateway(client, renewQ, guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
         system.Seam.Connect("offboard", new NativeOffboardGateway(client, offboardQ),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);

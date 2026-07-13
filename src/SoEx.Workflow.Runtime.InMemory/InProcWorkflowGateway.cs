@@ -11,7 +11,8 @@ namespace SoEx.Workflow.Runtime.InMemory;
 /// observed via <see cref="CompletionAsync"/> — adapter-specific, like every backend's.
 /// </summary>
 public sealed class InProcWorkflowGateway<I>(
-    GovernedStep<I> step, GovernedTermination termination, IGatewayAuthorizer? authorizer = null) : IWorkflowGateway
+    GovernedStep<I> step, GovernedTermination termination, IGatewayAuthorizer? authorizer = null,
+    GatewaySealGuard? guard = null) : IWorkflowGateway
     where I : class
 {
     private readonly ConcurrentDictionary<string, (InMemoryWorkflowRuntime Runtime, Task<byte[]> Completion)> _instances = new();
@@ -23,12 +24,14 @@ public sealed class InProcWorkflowGateway<I>(
             await authorizer.AuthorizeStartAsync(instanceId);
         }
 
+        guard?.RequireSealed(sealedSeed, "the start seed");
+
         // A *running* instance owns its id — a duplicate start while it is live is the caller's error. A
         // *completed* one no longer does: its slot is freed here so the same logical id can be re-onboarded
         // (a fresh generation), instead of being wedged forever by a finished run.
         if (_instances.TryGetValue(instanceId, out var existing) && !existing.Completion.IsCompleted)
         {
-            throw new InvalidOperationException($"workflow instance '{instanceId}' is already running");
+            throw new WorkflowInstanceAlreadyExistsException(instanceId);
         }
 
         var runtime = new InMemoryWorkflowRuntime(instanceId);
@@ -42,6 +45,9 @@ public sealed class InProcWorkflowGateway<I>(
         {
             await authorizer.AuthorizeRaiseEventAsync(instanceId, eventName);
         }
+
+        guard?.RequireSealed(sealedPayload, "the raise payload");
+        guard?.GuardRaiseId(instanceId, raiseId);
 
         await Instance(instanceId).Runtime.RaiseEventAsync(instanceId, eventName, sealedPayload ?? [], raiseId);
     }

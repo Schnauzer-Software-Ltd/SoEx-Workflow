@@ -41,8 +41,11 @@ internal class Program
         // The gateway authorization chokepoint is shown here in AllowAll mode (the panel buttons carry no token);
         // swap in `new ExampleGatewayAuthorizer(resolveToken, isAuthorized)` to enforce a production policy on every start/raise-event.
         IGatewayAuthorizer authorizer = ExampleGatewayAuthorizer.AllowAll;
-        var onboardGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Onboard)), termination, authorizer);
-        var renewGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Renew)), termination, authorizer);
+        // Defence in depth at the gateway: reject a raise id carrying a subject, and reject seed/payload bytes
+        // that aren't sealed (a caller that bypassed the WorkflowUtility seal would otherwise journal plaintext).
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);
+        var onboardGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Onboard)), termination, authorizer, sealGuard);
+        var renewGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Renew)), termination, authorizer, sealGuard);
         system.Seam.Connect("onboard", onboardGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard)), system.Serializer);
         system.Seam.Connect("renew", renewGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
 

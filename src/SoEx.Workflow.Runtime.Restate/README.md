@@ -52,8 +52,18 @@ The flattened `ActionDto` a `wait` returns carries two pre-sealed continuations 
 `onTimeout` (the step to resume into when the timer wins) and `onEvent` (the step to resume into when
 `raise_event` delivers an empty payload, so an external caller can raise "this happened" with no flow
 knowledge). A non-empty raised payload always wins and becomes the next step. Both fields use the empty
-string, never JSON `null`, when absent. After changing either side of this wire contract, rebuild the
-Restate sidecar explicitly (`cargo build --release`); a stale binary silently runs the old contract.
+string, never JSON `null`, when absent. After changing either side of this wire contract, bump
+`RestateWorkflowHost.WireVersion` (and the sidecar's `WIRE_VERSION`) and rebuild the sidecar explicitly
+(`cargo build --release`).
+
+**Version handshake.** The sidecar sends its `WIRE_VERSION` on every `/step`/`/terminate` call in the
+`x-soex-wire-version` header, and the .NET host refuses a mismatch with `400` — so a stale sidecar binary no
+longer silently runs an old contract; it fails loudly instead. Keep the two constants in lock-step.
+
+**Timeouts and supervision.** The sidecar's callbacks to the host carry a request timeout (`STEP_TIMEOUT_SECS`,
+default 60s) so a hung host does not hang the invocation — the call fails and Restate's own retry drives it.
+The sidecar is a long-lived process built in-tree; run it under a restart policy (`systemd`, a container
+`restart:` policy) so a crash is recovered, and rebuild it whenever `WireVersion` changes.
 
 `RestateWorkflowGateway` (shipped here) is the `IWorkflowGateway` over the ingress HTTP API for a
 sidecar service. `StartAsync` submits `run` fire-and-forget (`/send`); `RaiseEventAsync` posts

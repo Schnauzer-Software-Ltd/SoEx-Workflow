@@ -23,13 +23,26 @@ namespace SoEx.Workflow.Runtime.Elsa;
 /// </summary>
 public sealed class ElsaWorkflowGateway(
     IServiceProvider services, string workflowDefinitionId, IGatewayAuthorizer? authorizer = null,
-    IIdempotencyStore? idempotency = null) : IWorkflowGateway
+    IIdempotencyStore? idempotency = null, GatewaySealGuard? guard = null) : IWorkflowGateway
 {
     public async Task StartAsync(string instanceId, byte[] sealedSeed)
     {
         if (authorizer is not null)
         {
             await authorizer.AuthorizeStartAsync(instanceId);
+        }
+
+        guard?.RequireSealed(sealedSeed, "the start seed");
+
+        // Elsa maps the logical id to a CorrelationId and mints its own instance id per create, so it does not
+        // dedupe on our id — a duplicate would spawn a second instance sharing the correlation (and confuse the
+        // raise-side lookup). Detect an existing correlated instance up front and reject it, so the same
+        // already-exists signal reaches the caller here as on the engines that enforce it natively.
+        WorkflowInstance? existing = await services.GetRequiredService<IWorkflowInstanceStore>()
+            .FindAsync(new WorkflowInstanceFilter { CorrelationId = instanceId });
+        if (existing is not null)
+        {
+            throw new WorkflowInstanceAlreadyExistsException(instanceId);
         }
 
         var client = await services.GetRequiredService<ElsaRuntime>().CreateClientAsync();
@@ -47,6 +60,9 @@ public sealed class ElsaWorkflowGateway(
         {
             await authorizer.AuthorizeRaiseEventAsync(instanceId, eventName);
         }
+
+        guard?.RequireSealed(sealedPayload, "the raise payload");
+        guard?.GuardRaiseId(instanceId, raiseId);
 
         // Finds the parked instance by correlation, resolves the payload against the bookmark, resumes it.
         async Task<byte[]> ResumeOnce()

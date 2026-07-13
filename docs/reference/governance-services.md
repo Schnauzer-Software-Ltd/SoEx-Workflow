@@ -76,10 +76,17 @@ Collapses at-least-once step redelivery to a single effect on the
 re-raise through whichever store is wired (see the
 [gateway-semantics matrix](runtime-matrix.md#gateway-semantics)).
 
+Delivery is **effectively-once**, not exactly-once. A step's effect runs once per triple under normal
+operation, but a crash in the window between the consumer effect committing and the store recording the
+effect `done` leaves a `pending` claim that is stolen after `StealAfter` (default 2 minutes) and the effect
+re-runs — so under crash it is at-least-once, and your effect must be idempotent. Set `StealAfter` longer
+than your slowest step, and wire the durable store (not the in-memory one) if you need dedup to survive a
+restart.
+
 | Implementation | Package |
 |---|---|
 | `InMemoryIdempotencyStore` | `SoEx.Workflow` |
-| `RavenDbIdempotencyStore` | `SoEx.Workflow.Idempotency.RavenDB` (compare-exchange, exactly-once) |
+| `RavenDbIdempotencyStore` | `SoEx.Workflow.Idempotency.RavenDB` (compare-exchange; effectively-once, at-least-once under crash in the [effect-commit … done-write] window) |
 
 ## `IdempotencyKey`
 

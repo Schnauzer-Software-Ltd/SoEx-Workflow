@@ -7,6 +7,20 @@ public sealed record StepInput(byte[] Payload, long Sequence);
 
 public sealed record TerminateInput(long Sequence);
 
+public sealed record QuarantineInput(long Sequence, int Attempts, string Error);
+
+/// <summary>Maps the cross-runtime <see cref="WorkflowStepOptions"/> onto Temporal's activity retry primitive.</summary>
+internal static class TemporalStepOptions
+{
+    public static Temporalio.Common.RetryPolicy RetryPolicyFrom(WorkflowStepOptions o) => new()
+    {
+        MaximumAttempts = o.EffectiveMaxAttempts,
+        InitialInterval = o.FirstRetryDelay,
+        BackoffCoefficient = (float)o.BackoffCoefficient,
+        MaximumInterval = o.MaxRetryDelay,
+    };
+}
+
 /// <summary>
 /// A flattened, sandbox-safe view of a <see cref="WorkflowAction"/> the workflow can
 /// switch on without polymorphic ($type) deserialization on the replay path.
@@ -32,7 +46,7 @@ public sealed class WorkflowActivities(IGovernedStep step, GovernedTermination t
             action = (step.DispatchGovernedAsync(input.Payload, instanceId, input.Sequence).GetAwaiter().GetResult()) as WorkflowAction
                 ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
         }
-        catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, ambient, ex))
+        catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, instanceId, ambient, ex))
         {
             // Temporal records the activity-failure message in workflow history in clear, so a step exception
             // carrying a subject id would survive the shred — replace it (the original is never chained; its
@@ -63,5 +77,14 @@ public sealed class WorkflowActivities(IGovernedStep step, GovernedTermination t
         string instanceId = ActivityExecutionContext.Current.Info.WorkflowId!;
         var key = new IdempotencyKey(instanceId, "terminal", input.Sequence);
         termination.TerminateAsync(instanceId, key, TerminationTrigger.NaturalCompletion).GetAwaiter().GetResult();
+    }
+
+    /// <summary>Park a FAILED instance (park-before-shred): retain the key, record it held. The error is re-scrubbed before the held log.</summary>
+    [Activity]
+    public void Quarantine(QuarantineInput input)
+    {
+        string instanceId = ActivityExecutionContext.Current.Info.WorkflowId!;
+        var key = new IdempotencyKey(instanceId, "terminal", input.Sequence);
+        termination.QuarantineAsync(instanceId, key, input.Attempts, new Exception(input.Error)).GetAwaiter().GetResult();
     }
 }

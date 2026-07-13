@@ -50,7 +50,9 @@ public static class WorkflowMaintenance
         External.IWorkflowUtility utility,
         WorkflowMaintenanceOptions options,
         CancellationToken cancellation = default,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        Func<string, LoopPassHealth, Task>? onPass = null,
+        Func<string, Exception, LoopPassHealth, Task>? onError = null)
     {
         ArgumentNullException.ThrowIfNull(utility);
         ArgumentNullException.ThrowIfNull(options);
@@ -71,6 +73,9 @@ public static class WorkflowMaintenance
                 _ => utility.ReviewDeadlinesAsync((long)options.EscalateWithin.TotalSeconds)),
         };
 
-        return new WorkflowMaintenanceLoop(time).RunAsync(passes, cancellation);
+        // Forward each pass' outcome to the host's observability hooks: a drain/sweep/re-drive/review that
+        // fails (expired credentials, an unreachable store) must not fail forever unseen while statutory
+        // deadlines breach. Default hooks are null so a consumer that wants the old fire-and-forget still gets it.
+        return new WorkflowMaintenanceLoop(time).RunAsync(passes, onPass, onError, cancellation);
     }
 }

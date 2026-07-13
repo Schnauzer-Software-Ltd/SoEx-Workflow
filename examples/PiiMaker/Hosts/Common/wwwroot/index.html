@@ -100,6 +100,8 @@
         <div class="row"><label>Org</label><input id="on-org" value="org-acme" /></div>
         <div class="row"><label>Email</label><input id="on-email" value="invitee@example.com" /></div>
         <div class="row"><label>Offer</label><input id="on-offer" value="team-annual" /></div>
+        <div class="row"><label>Attempt</label><input id="on-attempt" type="number" min="0" value="0" />
+          <button class="ghost" data-act="newAttempt" title="Bump the attempt to restart onboarding for this same org+email">↻ new attempt</button></div>
         <div class="btns">
           <button data-act="startOnboarding">Start onboarding</button>
           <button class="ghost" data-act="accountVerified">Account verified</button>

@@ -32,6 +32,7 @@ public static class DurableTaskWorkflowHost
                 tasks.AddOrchestrator<WorkflowOrchestration>();
                 tasks.AddActivity<StepActivity>();
                 tasks.AddActivity<TerminateActivity>();
+                tasks.AddActivity<QuarantineActivity>();
             });
             worker.UseDurableTaskScheduler(connectionString);
         });

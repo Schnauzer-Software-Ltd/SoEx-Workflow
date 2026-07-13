@@ -55,6 +55,25 @@ public static class WorkflowEnvelope
     public static byte[]? AmbientBytes(IMessageSerializer serializer, byte[] envelope) =>
         Read(serializer, envelope).AmbientContext;
 
+    /// <summary>
+    /// True if <paramref name="bytes"/> deserialize to a readable plaintext step envelope (an
+    /// <see cref="InvocationRequest"/> with an operation name). Sealed bytes are ciphertext and do not — so a
+    /// <c>true</c> here is a caller that skipped the seal. Any deserialize failure (the normal case for
+    /// ciphertext) is <c>false</c>: not a plaintext envelope. Used by the gateway seal guard as a cheap
+    /// shape check; never decrypts.
+    /// </summary>
+    public static bool LooksLikePlaintextEnvelope(IMessageSerializer serializer, byte[] bytes)
+    {
+        try
+        {
+            return serializer.Deserialize<InvocationRequest>(bytes) is { MethodName.Length: > 0 };
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static InvocationRequest Read(IMessageSerializer serializer, byte[] envelope) =>
         serializer.Deserialize<InvocationRequest>(envelope)
             ?? throw new ArgumentException("payload did not deserialize to an InvocationRequest", nameof(envelope));

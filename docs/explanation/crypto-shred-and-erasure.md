@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> This file was LLM generated and is pending editing by the project maintainer.
-
 # Crypto-shred and erasure
 
 The defining feature of SoEx.Workflow is that a workflow instance can be forgotten. This page explains

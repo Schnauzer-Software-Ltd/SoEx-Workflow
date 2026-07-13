@@ -30,6 +30,11 @@ public sealed record RaisedEvent(string? RaiseId, byte[] Payload);
 [DurableTask]
 public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[]>
 {
+    // The cross-runtime step-failure policy mapped onto Durable Task's activity retry: bounded exponential
+    // backoff (was zero retries — a single transient blip faulted the orchestration). Static/deterministic, so
+    // it is replay-safe. When the attempts are spent the activity call throws and the catch parks the instance.
+    private static readonly TaskOptions StepOptions = DurableTaskStepOptions.From(WorkflowStepOptions.Default);
+
     public override async Task<byte[]> RunAsync(TaskOrchestrationContext context, PortableSeed input)
     {
         byte[] current = input.Seed;
@@ -46,7 +51,7 @@ public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[
             {
                 long step = sequence++;
                 WorkflowActionDto action = await context.CallActivityAsync<WorkflowActionDto>(
-                    nameof(StepActivity), new StepInput(current, context.InstanceId, step));
+                    nameof(StepActivity), new StepInput(current, context.InstanceId, step), StepOptions);
 
                 switch (action.Kind)
                 {
@@ -75,12 +80,15 @@ public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // A failed portable instance still owes the crypto-shred — mirrors the native GovernedTaskOrchestrator's
-            // finally. continue-as-new returns above without throwing, so a fresh generation keeps its key; a
-            // Complete already shredded, so the idempotent termination no-ops. The shred runs off the replay path.
-            await context.CallActivityAsync<bool>(nameof(TerminateActivity), new TerminateInput(context.InstanceId, sequence));
+            // Park-before-shred: a failed portable instance is parked with its key RETAINED, never crypto-shred
+            // on the failure path — a transient step failure (or a poison step that exhausted its bounded retries)
+            // must not destroy the sealed journal. continue-as-new returns above without throwing, so a fresh
+            // generation keeps its key; a Complete already shredded, so the quarantine no-ops. Runs off the replay
+            // path. The message is re-scrubbed against the subject index before it reaches the held log.
+            await context.CallActivityAsync<bool>(nameof(QuarantineActivity),
+                new QuarantineInput(context.InstanceId, sequence, WorkflowStepOptions.Default.EffectiveMaxAttempts, ex.Message));
             throw;
         }
     }

@@ -181,10 +181,11 @@ public static class ZeebeWorkflowHost
         Func<string, long, string, byte[], Task<object?>> run)
     {
         byte[]? ambient = null;
+        string? instanceId = null;   // hoisted so the catch can scrub against the index even if a later parse throws
         try
         {
             FrameworkVars vars = JsonSerializer.Deserialize<FrameworkVars>(variablesJson, Json) ?? new();
-            string instanceId = Require(vars.InstanceId, "instanceId", jobDesc);
+            instanceId = Require(vars.InstanceId, "instanceId", jobDesc);
             byte[] seed = Convert.FromBase64String(Require(vars.Seed, "seed", jobDesc));
             string kind = RequireHeader(headersJson, "kind", jobDesc);
             ambient = step.AmbientOf(instanceId, seed);
@@ -209,7 +210,7 @@ public static class ZeebeWorkflowHost
         }
         catch (Exception ex)
         {
-            return SafeIncidentMessage(ex.Message, step, ambient);
+            return SafeIncidentMessage(ex.Message, step, instanceId, ambient);
         }
     }
 
@@ -222,10 +223,11 @@ public static class ZeebeWorkflowHost
         IGovernedStep step, GovernedTermination termination, string variablesJson, string jobDesc)
     {
         byte[]? ambient = null;
+        string? instanceId = null;   // hoisted so the catch can scrub against the index even if a later parse throws
         try
         {
             FrameworkVars vars = JsonSerializer.Deserialize<FrameworkVars>(variablesJson, Json) ?? new();
-            string instanceId = Require(vars.InstanceId, "instanceId", jobDesc);
+            instanceId = Require(vars.InstanceId, "instanceId", jobDesc);
 
             // The sealed seed rides as a reserved process variable for the instance's life, so the subjects are
             // still derivable here (the key is destroyed only by the shred below) — guard the in-clear instance
@@ -245,11 +247,17 @@ public static class ZeebeWorkflowHost
         }
         catch (Exception ex)
         {
-            return SafeIncidentMessage(ex.Message, step, ambient);
+            return SafeIncidentMessage(ex.Message, step, instanceId, ambient);
         }
     }
 
-    /// <summary>Completes the job on success, or fails it (a broker incident) with the PII-free message.</summary>
+    /// <summary>
+    /// Completes the job on success, or fails it with the PII-free message. Bounded retry, then park: the fail
+    /// command decrements the job's remaining retries (configured on the BPMN task) rather than forcing them to
+    /// zero, so a transient step failure is redelivered until the bound is spent — only then does the broker
+    /// raise an incident (the park: the key is kept, the instance waits for an operator). The old <c>Retries(0)</c>
+    /// forced an incident on the first failure, giving a transient blip no chance to recover.
+    /// </summary>
     private static async Task Settle(IJobClient jobClient, IJob job, string? failure)
     {
         if (failure is null)
@@ -258,7 +266,7 @@ public static class ZeebeWorkflowHost
         }
         else
         {
-            await jobClient.NewFailCommand(job.Key).Retries(0).ErrorMessage(failure).Send();
+            await jobClient.NewFailCommand(job.Key).Retries(Math.Max(0, job.Retries - 1)).ErrorMessage(failure).Send();
         }
     }
 
@@ -268,11 +276,18 @@ public static class ZeebeWorkflowHost
     /// known subject id is replaced with a fixed string; a message free of every known subject passes through
     /// for diagnosability — the same substring guard the framework applies to every other in-clear name.
     /// </summary>
-    private static string SafeIncidentMessage(string? raw, IGovernedStep step, byte[]? ambient)
+    private static string SafeIncidentMessage(string? raw, IGovernedStep step, string? instanceId, byte[]? ambient)
     {
         try
         {
-            return step.GuardVisibleName(raw ?? "governed job failed", ambient);
+            string message = raw ?? "governed job failed";
+
+            // When the ambient is unreadable, GuardVisibleName alone would find no subjects and pass any text
+            // (the null-ambient defect). Scrub against the subject index for the instance instead. If we never
+            // parsed an instance id (the failure was before that), we cannot name subjects — withhold.
+            return instanceId is null
+                ? throw new InvalidOperationException("no instance id to resolve subjects — withholding the incident detail")
+                : step.GuardVisibleNameForInstance(message, instanceId, ambient);
         }
         catch
         {

@@ -68,3 +68,32 @@ Reference these at process startup:
   (`SoEx.Hosting.Serializers.NewtonsoftJson.JsonMessageSerializer`), which the host registers as the
   `IMessageSerializer` automatically, so there's no separate serializer package to add.
 - `SoEx.Context` — if a step reads the ambient `SubjectContext`.
+
+## Shipping status and upgrade paths
+
+Know these before you build a deployment on this. They are disclosed rather than resolved.
+
+- **No packages, no versioning, no CI (deferred).** Nothing here is published to nuget.org, there are no
+  git tags or SemVer, and there is no CI gate in either repo. Consume by project reference at a pinned commit
+  and re-run the attestation locally before you deploy. Packaging and a CI publish leg are deliberate future
+  work, not an oversight.
+- **The substrate is a pinned prerelease.** The base SoEx packages are pinned to an exact unlisted prerelease
+  (`0.0.0-alpha-3.0`) with no compatibility policy. Treat a substrate bump as a breaking change until a stable
+  line exists: rebuild and re-attest against it.
+- **The governance stores create their schema with `EnsureCreated()`, not migrations.** The EF Core subject
+  index and maintenance stores build their schema on first use and have no migration machinery, so there is no
+  defined in-place upgrade path when a schema changes — a schema change today means a fresh database. If you run
+  the EF-backed stores in production, own the migration story yourself (generate EF migrations against the
+  `DbContext`s) until first-class migrations ship.
+- **Durable Task rides a preview SDK, emulator-verified.** The Durable Task adapter pins
+  `Microsoft.DurableTask.* 1.25.0-preview.1` and is exercised against the DTS **emulator**, not a real Azure
+  Durable Task Scheduler. "Durable Task works" here means "the emulator works"; validate against real DTS before
+  you rely on it, and expect the preview SDK to move.
+- **The Restate sidecar is a versioned wire contract now, but still hand-built.** The .NET host and the Rust
+  sidecar exchange a wire-contract version on every `/step`/`/terminate` call (`RestateWorkflowHost.WireVersion`),
+  and the host **refuses a mismatch** — so a stale sidecar binary can no longer silently run an old contract.
+  The `/step`/`/terminate` callbacks also carry a request timeout (`STEP_TIMEOUT_SECS`, default 60) so a hung
+  host does not hang the invocation. The sidecar is still built in-tree (`cargo build --release`), not shipped
+  as a versioned container image, and must be **supervised** (a `systemd`/container restart policy) and rebuilt
+  in lock-step with the host whenever `WireVersion` changes. See the
+  [adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).

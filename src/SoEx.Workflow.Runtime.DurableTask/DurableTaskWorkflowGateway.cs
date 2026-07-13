@@ -16,13 +16,26 @@ public sealed class DurableTaskWorkflowGateway(
     DurableTaskClient client,
     string orchestrationName = DurableTaskWorkflowHost.OrchestrationName,
     Func<byte[], object>? startInput = null,
-    IGatewayAuthorizer? authorizer = null) : IWorkflowGateway
+    IGatewayAuthorizer? authorizer = null,
+    GatewaySealGuard? guard = null) : IWorkflowGateway
 {
     public async Task StartAsync(string instanceId, byte[] sealedSeed)
     {
         if (authorizer is not null)
         {
             await authorizer.AuthorizeStartAsync(instanceId);
+        }
+
+        guard?.RequireSealed(sealedSeed, "the start seed");
+
+        // DTS/DTFx does not throw on a duplicate instance id — it dedupes/overwrites by id — so detect a live
+        // run explicitly and reject it. A completed/failed/terminated instance is left to re-schedule (a fresh
+        // generation under the same id), mirroring the in-memory adapter's "a finished id can be re-onboarded".
+        OrchestrationMetadata? existing = await client.GetInstanceAsync(instanceId);
+        if (existing is not null && existing.RuntimeStatus is
+                OrchestrationRuntimeStatus.Running or OrchestrationRuntimeStatus.Pending or OrchestrationRuntimeStatus.Suspended)
+        {
+            throw new WorkflowInstanceAlreadyExistsException(instanceId);
         }
 
         await client.ScheduleNewOrchestrationInstanceAsync(
@@ -37,6 +50,9 @@ public sealed class DurableTaskWorkflowGateway(
         {
             await authorizer.AuthorizeRaiseEventAsync(instanceId, eventName);
         }
+
+        guard?.RequireSealed(sealedPayload, "the raise payload");
+        guard?.GuardRaiseId(instanceId, raiseId);
 
         // The portable orchestration waits on a RaisedEvent wrapper carrying the optional raise id and keeps a
         // per-instance handled-id set, so a re-raise with the same id is dropped instead of delivering twice.

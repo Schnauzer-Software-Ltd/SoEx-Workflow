@@ -11,14 +11,18 @@ public abstract record TriggerBase
 {
     private TriggerBase() { }
 
-    /// <summary>Start onboarding (flow A) for an invitee.</summary>
-    public sealed record StartOnboarding(string OrgId, string Email, string Offer) : TriggerBase;
+    /// <summary>Start onboarding (flow A) for an invitee. <paramref name="Attempt"/> folds into the derived
+    /// instance id, so bumping it starts a genuinely new run for the same org+email once an earlier run exists
+    /// (the identity alone is one-flow-per-subject by design). Defaults to 0 — the first/only attempt.</summary>
+    public sealed record StartOnboarding(string OrgId, string Email, string Offer, int Attempt = 0) : TriggerBase;
 
-    /// <summary>The identity provider confirmed the invitee verified their account.</summary>
-    public sealed record AccountVerified(string OrgId, string Email) : TriggerBase;
+    /// <summary>The identity provider confirmed the invitee verified their account. Carries the same
+    /// <paramref name="Attempt"/> as the start it belongs to, so the event routes to that run's instance.</summary>
+    public sealed record AccountVerified(string OrgId, string Email, int Attempt = 0) : TriggerBase;
 
-    /// <summary>The invitee accepted the invite.</summary>
-    public sealed record InviteAccepted(string OrgId, string Email) : TriggerBase;
+    /// <summary>The invitee accepted the invite. Carries the same <paramref name="Attempt"/> as its start so the
+    /// event routes to that run's instance.</summary>
+    public sealed record InviteAccepted(string OrgId, string Email, int Attempt = 0) : TriggerBase;
 
     /// <summary>Start the renewal cycle (flow B) for a subscriber.</summary>
     public sealed record StartRenewal(string SubscriberId) : TriggerBase;

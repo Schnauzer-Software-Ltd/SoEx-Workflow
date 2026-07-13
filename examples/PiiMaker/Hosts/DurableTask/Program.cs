@@ -52,7 +52,7 @@ internal class Program
         ISubjectIndex index = system.Index;
         IIdempotencyStore idempotency = system.Idempotency;
         var termination = new GovernedTermination(system.Erasure, keys, index, system.HeldLog);
-        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op);
+        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op, clearJournalResult: true);   // native result = PII-free StepReceipt
         GovernedStep<Portable.IMembershipManager> PortableStep(string op) => new(system.PortableEndpoint, system.Serializer, idempotency, keys, index, op);
 
         // Each flow binds the operation it drives. Renew is the DI-resolved step the PORTABLE driver uses; the
@@ -105,14 +105,15 @@ internal class Program
         // Wire the workflow seam. Onboarding + offboarding are NATIVE here (their gateways target the consumer-
         // authored orchestrations, an input factory adapting the sealed seed to each input shape); renewal is
         // PORTABLE (the default gateway targets the library driver).
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         system.Seam.Connect("onboard",
-            new DurableTaskWorkflowGateway(client, nameof(NativeOnboardOrchestration), seed => new NativeInput(seed, 120)),
+            new DurableTaskWorkflowGateway(client, nameof(NativeOnboardOrchestration), seed => new NativeInput(seed, 120), guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
         system.Seam.Connect("renew",
-            new DurableTaskWorkflowGateway(client),
+            new DurableTaskWorkflowGateway(client, guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
         system.Seam.Connect("offboard",
-            new DurableTaskWorkflowGateway(client, nameof(NativeOffboardOrchestration), seed => seed),
+            new DurableTaskWorkflowGateway(client, nameof(NativeOffboardOrchestration), seed => seed, guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);
 
         WebApplicationBuilder webBuilder = MembershipWebHost.Create(port);

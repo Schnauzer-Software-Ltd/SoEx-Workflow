@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> This file was LLM generated and is pending editing by the project maintainer.
-
 # How to authorize the gateway seam
 
 The trigger gateway ([Trigger flows from outside](trigger-flows-from-outside.md)) is the one place

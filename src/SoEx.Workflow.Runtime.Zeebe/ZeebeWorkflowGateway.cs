@@ -13,14 +13,22 @@ namespace SoEx.Workflow.Runtime.Zeebe;
 /// variable and the message correlation key — never as the broker key.
 /// </summary>
 public sealed class ZeebeWorkflowGateway(
-    IZeebeClient client, string bpmnProcessId, IGatewayAuthorizer? authorizer = null) : IWorkflowGateway
+    IZeebeClient client, string bpmnProcessId, IGatewayAuthorizer? authorizer = null,
+    GatewaySealGuard? guard = null, TimeSpan? raiseTtl = null) : IWorkflowGateway
 {
+    // How long the broker buffers a raised message so it still correlates if it arrives before the flow has
+    // opened its catch-event subscription. It also bounds the message-id dedup window. A raise whose correlation
+    // does not happen within this window is SILENTLY DROPPED by the broker, so size it to your worst-case
+    // arm-the-wait latency (and re-drive window). Default 5 minutes; set it explicitly for a slow-arming flow.
+    private readonly TimeSpan _raiseTtl = raiseTtl ?? TimeSpan.FromMinutes(5);
     public async Task StartAsync(string instanceId, byte[] sealedSeed)
     {
         if (authorizer is not null)
         {
             await authorizer.AuthorizeStartAsync(instanceId);
         }
+
+        guard?.RequireSealed(sealedSeed, "the start seed");
 
         // No duplicate-start guard on THIS path: the broker assigns every CreateProcessInstance its own unique
         // processInstanceKey and does not dedupe on a business variable, and this gateway holds no state to
@@ -67,6 +75,8 @@ public sealed class ZeebeWorkflowGateway(
             await authorizer.AuthorizeStartAsync(instanceId);
         }
 
+        guard?.RequireSealed(sealedSeed, "the start seed");
+
         // messageId = instanceId is the dedup token: the broker rejects a re-publish of the same id within the
         // TTL, so a duplicate start cannot spawn a second instance. The correlation key is the same logical id
         // (a start message carries one but does not correlate to a running instance).
@@ -97,6 +107,9 @@ public sealed class ZeebeWorkflowGateway(
             await authorizer.AuthorizeRaiseEventAsync(instanceId, eventName);
         }
 
+        guard?.RequireSealed(sealedPayload, "the raise payload");
+        guard?.GuardRaiseId(instanceId, raiseId);
+
         // An empty raise resumes the waiting catch event with no data; a payload-carrying raise rides under a
         // non-reserved key so it never clobbers the framework's instanceId/seed variables in the journal.
         string variables = sealedPayload is { Length: > 0 } payload
@@ -109,7 +122,7 @@ public sealed class ZeebeWorkflowGateway(
         var command = client.NewPublishMessageCommand()
             .MessageName(eventName)
             .CorrelationKey(instanceId)
-            .TimeToLive(TimeSpan.FromMinutes(5))
+            .TimeToLive(_raiseTtl)
             .Variables(variables);
 
         // Idempotent raise: Zeebe dedupes published messages by message id within the TTL window, so a

@@ -15,6 +15,7 @@ namespace PiiMaker.Manager.Membership.Interface;
 /// </summary>
 public interface IMembershipManager
 {
-    /// <summary>Fire one inbound trigger; returns the PII-free instance id it derived.</summary>
-    Task<string> Trigger(TriggerBase trigger);
+    /// <summary>Fire one inbound trigger; returns the PII-free instance id it derived plus whether a start was
+    /// deduplicated because a run already owns that id (see <see cref="TriggerResult"/>).</summary>
+    Task<TriggerResult> Trigger(TriggerBase trigger);
 }

@@ -22,6 +22,9 @@ public sealed class WorkflowDriverActivity : Activity
     public required string SagaInstanceId { get; init; }
     public required byte[] Seed { get; init; }
 
+    /// <summary>The per-step failure policy: bounded retry, then park-before-shred. Defaults to the cross-runtime default.</summary>
+    public WorkflowStepOptions Options { get; init; } = WorkflowStepOptions.Default;
+
     public byte[]? Result { get; private set; }
 
     private long _sequence;
@@ -37,13 +40,15 @@ public sealed class WorkflowDriverActivity : Activity
         {
             await StepLoopAsync(context, current);
         }
-        catch
+        catch (Exception error)
         {
-            // A failed portable instance still owes the crypto-shred — mirror of the native Elsa termination. The
-            // suspend paths (wait/delay) return normally and Loop stays in the loop, so only a failure
-            // reaches here; the idempotent termination no-ops if a Complete already shredded.
-            await Termination.TerminateAsync(
-                SagaInstanceId, new IdempotencyKey(SagaInstanceId, "terminal", _sequence), TerminationTrigger.NaturalCompletion);
+            // Park-before-shred: a failed portable instance is quarantined with its key RETAINED — a transient
+            // step failure must never crypto-shred the sealed journal (the old behaviour shredded on the first
+            // blip). The suspend paths (wait/delay) return normally and Loop stays in the loop, so only a real
+            // failure reaches here. Recovery is a re-drive or a deliberate terminate; idempotent if a Complete
+            // already shredded (key gone → the coordinator no-ops).
+            await Termination.QuarantineAsync(
+                SagaInstanceId, new IdempotencyKey(SagaInstanceId, "terminal", _sequence), Options.EffectiveMaxAttempts, error);
             throw;
         }
     }
@@ -58,10 +63,9 @@ public sealed class WorkflowDriverActivity : Activity
             WorkflowAction action;
             try
             {
-                action = (await Step.DispatchGovernedAsync(current, SagaInstanceId, seq)) as WorkflowAction
-                    ?? throw new InvalidOperationException($"the '{Step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
+                action = await DispatchWithRetryAsync(current, seq);
             }
-            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(Step, ambient, ex))
+            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(Step, SagaInstanceId, ambient, ex))
             {
                 // Elsa persists a faulted activity's exception message in clear, and it survives the shred, so a
                 // step exception carrying a subject id is replaced before it reaches the catch in DriveAsync that
@@ -96,7 +100,7 @@ public sealed class WorkflowDriverActivity : Activity
                         AutoBurn = true,
                         Metadata = new Dictionary<string, string> { ["onEvent"] = Convert.ToBase64String(wait.OnEvent is { } oe ? Step.SealStep(SagaInstanceId, oe, ambient) : []) },
                     });
-                    if (wait.Timeout is not null)
+                    if (wait.Timeout is { } timeout)
                     {
                         context.CreateBookmark(new CreateBookmarkArgs
                         {
@@ -104,12 +108,12 @@ public sealed class WorkflowDriverActivity : Activity
                             Stimulus = $"{TimerBookmark}:{_sequence}",
                             Callback = OnResume,
                             AutoBurn = true,
-                            Metadata = new Dictionary<string, string> { ["onTimeout"] = Convert.ToBase64String(wait.OnTimeout is { } ot ? Step.SealStep(SagaInstanceId, ot, ambient) : []) },
+                            Metadata = TimerMetadata(timeout, wait.OnTimeout is { } ot ? Step.SealStep(SagaInstanceId, ot, ambient) : []),
                         });
                     }
                     return;
 
-                case WorkflowAction.Delay:
+                case WorkflowAction.Delay delay:
                     Suspend(context);
                     context.CreateBookmark(new CreateBookmarkArgs
                     {
@@ -117,7 +121,7 @@ public sealed class WorkflowDriverActivity : Activity
                         Stimulus = $"{TimerBookmark}:{_sequence}",
                         Callback = OnResume,
                         AutoBurn = true,
-                        Metadata = new Dictionary<string, string> { ["onTimeout"] = Convert.ToBase64String(current) },
+                        Metadata = TimerMetadata(delay.Duration, current),
                     });
                     return;
 
@@ -130,6 +134,40 @@ public sealed class WorkflowDriverActivity : Activity
             }
         }
     }
+
+    // Runs one governed step under the binding's failure policy: retry the dispatch on a non-terminal failure
+    // with bounded exponential backoff, up to MaxAttempts. When the attempts are spent (or the failure is
+    // terminal) the exception propagates to the journal-safety scrub and then to DriveAsync's catch, which
+    // parks the instance. Retry backoff is a real in-execution wait; a redelivered activity re-enters fresh,
+    // and the step's idempotency (when wired) collapses a re-run that already recorded its effect.
+    private async ValueTask<WorkflowAction> DispatchWithRetryAsync(byte[] current, long seq)
+    {
+        int attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                return (await Step.DispatchGovernedAsync(current, SagaInstanceId, seq)) as WorkflowAction
+                    ?? throw new InvalidOperationException($"the '{Step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
+            }
+            catch (Exception ex) when (Options.ShouldRetry(attempt, ex))
+            {
+                await Task.Delay(Options.DelayBefore(attempt));
+            }
+        }
+    }
+
+    // The __timer bookmark carries its DUE TIME (dueAt) so a consumer-driven resumer can find and fire due
+    // timers on the wall clock — the framework does not host a scheduler for Elsa, so a production Elsa host
+    // scans due __timer bookmarks and resumes them (see the runtime matrix / operate-in-production guide). Elsa
+    // is checkpoint/resume (not replay), so reading the wall clock here is deterministic-safe. onTimeout is the
+    // sealed step to resume into when the timer fires.
+    private static Dictionary<string, string> TimerMetadata(TimeSpan after, byte[] onTimeoutSealed) => new()
+    {
+        ["dueAt"] = DateTimeOffset.UtcNow.Add(after).ToString("O"),
+        ["onTimeout"] = Convert.ToBase64String(onTimeoutSealed),
+    };
 
     /// <summary>
     /// Persists the per-step sequence into the (durable) activity context before suspending. A resume may

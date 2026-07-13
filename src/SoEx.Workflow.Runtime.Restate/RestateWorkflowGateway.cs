@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -11,7 +12,8 @@ namespace SoEx.Workflow.Runtime.Restate;
 /// the named durable promise — an empty payload resumes the wait's pre-sealed OnEvent step.
 /// </summary>
 public sealed class RestateWorkflowGateway(
-    Uri ingress, string serviceName, HttpClient? http = null, IGatewayAuthorizer? authorizer = null) : IWorkflowGateway
+    Uri ingress, string serviceName, HttpClient? http = null, IGatewayAuthorizer? authorizer = null,
+    GatewaySealGuard? guard = null) : IWorkflowGateway
 {
     private readonly HttpClient _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
@@ -20,6 +22,20 @@ public sealed class RestateWorkflowGateway(
         if (authorizer is not null)
         {
             await authorizer.AuthorizeStartAsync(instanceId);
+        }
+
+        guard?.RequireSealed(sealedSeed, "the start seed");
+
+        // Restate keys the workflow by {service}/{instanceId} and runs it at most once per key, but the
+        // fire-and-forget /run/send accepts a duplicate silently (idempotent) — no already-exists signal on the
+        // start path. Probe the workflow's output first: 404 ("invocation not found") means the key was never
+        // invoked, so it is safe to start; any other status means a run already owns it (still running, or
+        // completed — a finished workflow key cannot be re-run either). The output probe is non-blocking.
+        HttpResponseMessage probe = await _http.GetAsync(
+            new Uri(ingress, $"restate/workflow/{serviceName}/{instanceId}/output"));
+        if (probe.StatusCode != HttpStatusCode.NotFound)
+        {
+            throw new WorkflowInstanceAlreadyExistsException(instanceId);
         }
 
         HttpResponseMessage resp = await _http.PostAsync(
@@ -34,6 +50,9 @@ public sealed class RestateWorkflowGateway(
         {
             await authorizer.AuthorizeRaiseEventAsync(instanceId, eventName);
         }
+
+        guard?.RequireSealed(sealedPayload, "the raise payload");
+        guard?.GuardRaiseId(instanceId, raiseId);
 
         // Target the base instance id even across continue-as-new: after a Loop the live wait runs in a later
         // generation (keyed instanceId~<seq>), and the sidecar forwards a raise that lands on a completed

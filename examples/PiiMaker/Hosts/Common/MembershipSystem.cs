@@ -249,7 +249,13 @@ public static class MembershipSystem
     private static IInstanceKeyStore CreateOpenBao()
     {
         string address = Environment.GetEnvironmentVariable("PIIMAKER_OPENBAO_ADDR") ?? "http://127.0.0.1:8200";
-        string token = Environment.GetEnvironmentVariable("PIIMAKER_OPENBAO_TOKEN") ?? "root";
+        // Fail fast on a missing token rather than falling back to a hardcoded default: a silent "root" default is
+        // exactly the kind of dev credential that ships to production by accident. The dev harness
+        // (examples/dev/piimaker.sh) sets PIIMAKER_OPENBAO_TOKEN explicitly (to the dev root token); a real
+        // deployment must supply a scoped token with rights only on the Transit mount.
+        string token = Environment.GetEnvironmentVariable("PIIMAKER_OPENBAO_TOKEN")
+            ?? throw new InvalidOperationException(
+                "PIIMAKER_OPENBAO_TOKEN is required — provide a real OpenBao token (the dev harness sets it; a deployment supplies a scoped one). Refusing to default to 'root'.");
         string mount = Environment.GetEnvironmentVariable("PIIMAKER_OPENBAO_MOUNT") ?? "transit";
         return new OpenBaoInstanceKeyStore(address, token, mount);
     }

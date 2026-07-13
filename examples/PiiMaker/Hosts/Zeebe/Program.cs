@@ -43,7 +43,8 @@ internal class Program
         IIdempotencyStore idempotency = system.Idempotency;
         var termination = new GovernedTermination(system.Erasure, keys, index, system.HeldLog);
         var onboardStep = new GovernedStep<Native.IMembershipManager>(
-            system.NativeEndpoint, system.Serializer, idempotency, keys, index, nameof(Native.IMembershipManager.Onboard));
+            system.NativeEndpoint, system.Serializer, idempotency, keys, index, nameof(Native.IMembershipManager.Onboard),
+            clearJournalResult: true);   // the native step result is a PII-free StepReceipt (step name + non-subject detail)
 
         // Connect to the broker and deploy the BPMN graph (the visual-editor artifact) from the host output.
         IZeebeClient client = ZeebeWorkflowHost.Connect(gateway);
@@ -58,7 +59,8 @@ internal class Program
         // Wire the workflow seam: onboarding starts by sealing the OnboardStep seed and creating the BPMN process
         // instance; InviteAccepted publishes the correlated "invite-accepted" message. The BPMN graph IS the
         // onboarding flow, so only onboarding is wired here (renewal/offboarding stay unwired on this host).
-        system.Seam.Connect("onboard", new ZeebeWorkflowGateway(client, "membership-onboard"),
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
+        system.Seam.Connect("onboard", new ZeebeWorkflowGateway(client, "membership-onboard", guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
 
         WebApplicationBuilder builder = MembershipWebHost.Create(port);

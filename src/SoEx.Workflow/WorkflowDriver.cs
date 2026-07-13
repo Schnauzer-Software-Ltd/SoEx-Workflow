@@ -7,9 +7,12 @@ namespace SoEx.Workflow;
 /// (pipeline + per-step governance + idempotency), route the returned action against the
 /// runtime, and run the termination erasure lifecycle via <see cref="GovernedTermination"/> on completion.
 /// </summary>
-public sealed class WorkflowDriver<I>(IWorkflowRuntime runtime, GovernedStep<I> step, GovernedTermination termination)
+public sealed class WorkflowDriver<I>(
+    IWorkflowRuntime runtime, GovernedStep<I> step, GovernedTermination termination, WorkflowStepOptions? options = null)
     where I : class
 {
+    private readonly WorkflowStepOptions _options = options ?? WorkflowStepOptions.Default;
+
     public async Task<byte[]> RunAsync(byte[] seedStep)
     {
         byte[] current = seedStep;
@@ -24,7 +27,7 @@ public sealed class WorkflowDriver<I>(IWorkflowRuntime runtime, GovernedStep<I> 
             {
                 long sequence = runtime.NextSequence();
                 lastSequence = sequence;
-                object? result = await step.DispatchGovernedAsync(current, runtime.InstanceId, sequence);
+                object? result = await DispatchWithRetryAsync(current, sequence);
                 WorkflowAction action = result as WorkflowAction
                     ?? throw new InvalidOperationException(
                         $"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
@@ -61,17 +64,42 @@ public sealed class WorkflowDriver<I>(IWorkflowRuntime runtime, GovernedStep<I> 
                 }
             }
         }
-        catch
+        catch (Exception error)
         {
-            // The termination is "completion, cancellation, or erasure": a failed or cancelled portable instance
-            // still owes the crypto-shred, so run it before the failure propagates. This is the driver analogue
-            // of the native finally-block. Idempotent — if a Complete already shredded, the key is gone and the
-            // coordinator no-ops; continue-as-new stays in the loop above and never reaches here.
-            await termination.TerminateAsync(
+            // Park-before-shred: a failed portable instance is quarantined with its key RETAINED — a transient
+            // step failure must never crypto-shred the sealed journal (the old behaviour destroyed the instance
+            // on the first blip). The key is destroyed only on a deliberate termination: a Complete above, or an
+            // erasure/force-terminate driven through the coordinator. An operator re-drives the held instance or
+            // terminates it explicitly. Idempotent — if a Complete already shredded, the key is gone and the
+            // coordinator treats the park as a no-op; continue-as-new stays in the loop and never reaches here.
+            await termination.QuarantineAsync(
                 runtime.InstanceId,
                 new IdempotencyKey(runtime.InstanceId, "terminal", lastSequence),
-                TerminationTrigger.NaturalCompletion);
+                _options.EffectiveMaxAttempts,
+                error);
             throw;
+        }
+    }
+
+    // Runs one governed step under the binding's failure policy: retry the dispatch on a non-terminal failure
+    // with bounded exponential backoff, up to MaxAttempts. When the attempts are spent (or the failure is
+    // classified terminal) the exception propagates to RunAsync's catch, which parks the instance. Retry
+    // backoff is a real in-execution wait (Task.Delay), not the durable timer — a redelivered step re-enters
+    // here fresh, and the step's idempotency (when wired) collapses a re-run that already recorded its effect.
+    private async Task<object?> DispatchWithRetryAsync(byte[] current, long sequence)
+    {
+        int attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                return await step.DispatchGovernedAsync(current, runtime.InstanceId, sequence);
+            }
+            catch (Exception ex) when (_options.ShouldRetry(attempt, ex))
+            {
+                await Task.Delay(_options.DelayBefore(attempt));
+            }
         }
     }
 

@@ -26,12 +26,19 @@ public static class GovernedStepFailure
     /// crypto-shred. <c>ToString()</c> already walks <c>InnerException</c> / <c>AggregateException.InnerExceptions</c>,
     /// so guarding it covers them all at once.
     /// </para>
+    /// <para>
+    /// Instance-aware: a step failure often has a <b>null</b> ambient (the failure is a decode/guard throwing
+    /// before the ambient was decrypted). Reading subjects from that null ambient found none, so any exception
+    /// text passed — the verified clear-text-escape defect. This now routes through
+    /// <see cref="IGovernedStep.GuardVisibleNameForInstance"/>, which falls back to the subject index for
+    /// <paramref name="instanceId"/> and withholds when neither source can name the subjects.
+    /// </para>
     /// </summary>
-    public static bool IsJournalSafe(IGovernedStep step, byte[]? ambientContext, Exception error)
+    public static bool IsJournalSafe(IGovernedStep step, string instanceId, byte[]? ambientContext, Exception error)
     {
         try
         {
-            step.GuardVisibleName(error.ToString(), ambientContext);
+            step.GuardVisibleNameForInstance(error.ToString(), instanceId, ambientContext);
             return true;
         }
         catch

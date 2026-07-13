@@ -34,6 +34,10 @@ verification, just silence about the paths you didn't run, so say which backends
 means very different things with and without Temporal, Durable Task, Restate, Camunda 8, and a durable
 key store present.
 
+> One "hermetic" caveat: the Temporal time-skipping tests use Temporal's test server, which the SDK
+> **downloads on first use**, so the first run on a fresh machine needs network access even though the tests
+> need no running Temporal server. Later runs use the cached binary and are offline.
+
 | Runtime | Needs | Default port(s) |
 |---|---|---|
 | InProc | nothing | — |

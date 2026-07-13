@@ -15,8 +15,12 @@ public interface IWorkflowUtility
     /// subject's ambient) and starts the flow on the runtime wired for <paramref name="flowKey"/>.
     /// <paramref name="firstStep"/> is opaque to the utility — it is sealed as the seed and only ever journaled
     /// as ciphertext. The caller derives the PII-free <paramref name="instanceId"/> (a stateless hash of identity).
+    /// <para>Returns <see cref="StartOutcome.AlreadyExists"/> when a run already owns the id (the deterministic
+    /// id makes a re-derived duplicate start the common case), so the caller can surface a meaningful response
+    /// rather than a raw backend error. The result is data, not an exception, because it must cross the proxy
+    /// boundary the manager reaches the utility over.</para>
     /// </summary>
-    Task StartAsync(string flowKey, string instanceId, string subject, object firstStep);
+    Task<StartOutcome> StartAsync(string flowKey, string instanceId, string subject, object firstStep);
 
     /// <summary>Raises a bare business event onto <paramref name="instanceId"/> — the waiting flow resumes into
     /// its own pre-sealed continuation.</summary>

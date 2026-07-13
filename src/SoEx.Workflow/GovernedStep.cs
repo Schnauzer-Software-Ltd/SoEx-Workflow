@@ -49,6 +49,16 @@ public interface IGovernedStep
     string GuardVisibleName(string name, byte[]? ambientContext);
 
     /// <summary>
+    /// Like <see cref="GuardVisibleName"/> but instance-aware, for scrubbing a to-be-journaled <b>failure</b>
+    /// message: when the ambient is unreadable (a decode or guard threw before it was decrypted), it falls back
+    /// to the subject index for <paramref name="instanceId"/> — the same still-live source the held-log scrub
+    /// uses — instead of treating "no ambient" as "no subject". If neither the ambient nor the index can name
+    /// the instance's subjects it throws (withhold), so the caller never journals a message it could not prove
+    /// PII-free. Returns <paramref name="name"/> when it is safe.
+    /// </summary>
+    string GuardVisibleNameForInstance(string name, string instanceId, byte[]? ambientContext);
+
+    /// <summary>
     /// Returns <paramref name="serializedResult"/> if PII-free, else throws. The returned workflow result
     /// is journaled in clear and escapes the termination shred, so it must not carry a subject id.
     /// </summary>
@@ -77,14 +87,18 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     private readonly IIdempotencyStore? _idempotency;
     private readonly StepMetadataExtractor _extractor;
     private readonly IInstanceKeyStore _keys;
+    private readonly ISubjectIndex _index;
     private readonly InstanceGovernor _governor;
     private readonly WorkflowSealer _sealer;
     private readonly ISubjectMatcher _matcher;
+    private readonly bool _clearJournalResult;
+    private readonly WorkflowMetrics? _metrics;
 
     public GovernedStep(
         IWorkflowDispatch endpoint, IMessageSerializer serializer,
         IIdempotencyStore? idempotency, IInstanceKeyStore keys, ISubjectIndex index,
-        string? operationName = null, ISubjectMatcher? subjectMatcher = null)
+        string? operationName = null, ISubjectMatcher? subjectMatcher = null, bool clearJournalResult = false,
+        WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null)
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(index);
@@ -94,10 +108,13 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         _idempotency = idempotency;
         _extractor = new StepMetadataExtractor(serializer);
         _keys = keys;
+        _index = index;
         _governor = new InstanceGovernor(keys, index);
         OperationName = ResolveOperation(operationName);
-        _sealer = new WorkflowSealer(keys, serializer, OperationName);
+        _sealer = new WorkflowSealer(keys, serializer, OperationName, tombstone);
         _matcher = subjectMatcher ?? SubstringSubjectMatcher.Default;
+        _clearJournalResult = clearJournalResult;
+        _metrics = metrics;
     }
 
     // The governed operation: the contract's sole method by default, or — for a multi-operation
@@ -157,9 +174,40 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     public string GuardVisibleName(string name, byte[]? ambientContext) =>
         RuntimeVisibleName.Require(name, SubjectIds(ambientContext), _matcher);
 
+    /// <summary>Instance-aware name guard: falls back to the subject index when the ambient is unreadable, and
+    /// withholds (throws) when neither source can name the instance's subjects. See the interface member.</summary>
+    public string GuardVisibleNameForInstance(string name, string instanceId, byte[]? ambientContext)
+    {
+        if (ambientContext is { Length: > 0 })
+        {
+            // The step's own ambient is authoritative: guard against exactly the subjects it declares. An empty
+            // set here is a genuine "this step carries no subject", so the name is safe to journal.
+            return RuntimeVisibleName.Require(name, SubjectIds(ambientContext), _matcher);
+        }
+
+        // The ambient could not be read, so it cannot tell us the subjects (this is the defect that let a null
+        // ambient pass any exception text through). Fall back to the still-live subject index for the instance —
+        // the same source the held-log scrub consults. If the index is empty too, we cannot prove the name is
+        // subject-free, so withhold: journal the fixed message rather than risk leaking an unindexed subject.
+        IReadOnlyCollection<string> indexed = _index.SubjectsFor(instanceId);
+        if (indexed.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"cannot determine the subjects for instance '{instanceId}' (ambient unreadable, index empty) — withholding to keep the journal PII-free");
+        }
+
+        return RuntimeVisibleName.Require(name, indexed, _matcher);
+    }
+
     /// <summary>Guards the returned workflow result (journaled in clear, escapes the shred) against carrying a known subject id.</summary>
-    public byte[] GuardResultPiiFree(byte[] serializedResult, byte[]? ambientContext) =>
-        RuntimeVisibleName.RequireBytesFree(serializedResult, SubjectIds(ambientContext), "the workflow result", _matcher);
+    public byte[] GuardResultPiiFree(byte[] serializedResult, byte[]? ambientContext)
+    {
+        IReadOnlyList<string> subjectIds = SubjectIds(ambientContext);
+        RuntimeVisibleName.RequireBytesFree(serializedResult, subjectIds, "the workflow result", _matcher);
+        // A subject id serializer-escaped (\uXXXX) or Unicode-decomposed slips the raw byte scan above; the
+        // canonical pass decodes those forms and scans again, so the escape evasion is closed here too.
+        return JournalCanonicalization.RequireCanonicalFree(serializedResult, subjectIds, "the workflow result", _matcher);
+    }
 
     /// <summary>The idempotency key for a sealed step — the native flow uses it for the termination write.</summary>
     public IdempotencyKey KeyFor(byte[] sealedEnvelope, string instanceId, long sequence) =>
@@ -179,6 +227,23 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     /// recorded result is itself sealed, so the idempotency store never holds plaintext payload.
     /// </summary>
     public async Task<object?> DispatchGovernedAsync(byte[] sealedEnvelope, string instanceId, long sequence)
+    {
+        try
+        {
+            object? result = await DispatchGovernedCoreAsync(sealedEnvelope, instanceId, sequence);
+            _metrics?.StepExecuted();
+            return result;
+        }
+        catch
+        {
+            // Per-attempt failure counter: a retried step increments this on each failed attempt, so the metric
+            // surfaces retry volume, not just terminal failures.
+            _metrics?.StepFailed();
+            throw;
+        }
+    }
+
+    private async Task<object?> DispatchGovernedCoreAsync(byte[] sealedEnvelope, string instanceId, long sequence)
     {
         byte[] stepEnvelope = _keys.Decrypt(instanceId, sealedEnvelope);
         StepMetadata meta = _extractor.Extract(stepEnvelope, instanceId, sequence);
@@ -205,10 +270,17 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         return Serializer.Deserialize<object>(_keys.Decrypt(instanceId, sealedResult));
     }
 
-    // Guards a *native* business result: it is journaled in clear and escapes the termination shred, so it
-    // must be PII-free for the subjects the framework governs. A portable WorkflowAction is not a business
-    // result — the driver re-seals its payloads — so it is exempt; guarding its plaintext would false-positive
-    // on data that never journals in clear. The decoded result is guarded, never the sealed recorded bytes.
+    // Guards a *native* business result: the consumer's own orchestrator reads it, so the backend journals it
+    // in clear (as the activity/step result) and it escapes the termination shred. A portable WorkflowAction is
+    // not a business result — the driver re-seals its payloads — so it is exempt; guarding its plaintext would
+    // false-positive on data that never journals in clear. The decoded result is guarded, never the sealed
+    // recorded bytes.
+    //
+    // Default-deny: the framework cannot seal a native result without blinding the orchestrator that branches
+    // on it, and a known-subject substring net lets any *other* clear PII (a name, address, or DOB that is not
+    // the registered subject id) through. So a non-null native result is refused unless the binding has opted
+    // in (clearJournalResult) — a conscious "this result is PII-free" declaration — rather than being journaled
+    // silently. When opted in, the substring + canonical scans are the backstop.
     private object? GuardBusinessResult(object? result, IReadOnlyList<string> subjectIds)
     {
         if (result is null or WorkflowAction)
@@ -216,7 +288,17 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
             return result;
         }
 
-        RuntimeVisibleName.RequireBytesFree(Serializer.Serialize(result), subjectIds, "the workflow result", _matcher);
+        if (!_clearJournalResult)
+        {
+            throw new InvalidOperationException(
+                $"the '{OperationName}' step returned a business result ({result.GetType().Name}) that is journaled in clear and " +
+                "survives the termination crypto-shred. Return a WorkflowAction (portable flow), return null, or — only after " +
+                "ensuring the result is PII-free — opt the binding into clear-journalling (clearJournalResult: true).");
+        }
+
+        byte[] serialized = Serializer.Serialize(result);
+        RuntimeVisibleName.RequireBytesFree(serialized, subjectIds, "the workflow result", _matcher);
+        JournalCanonicalization.RequireCanonicalFree(serialized, subjectIds, "the workflow result", _matcher);
         return result;
     }
 

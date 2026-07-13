@@ -41,7 +41,8 @@ internal class Program
         ISubjectIndex index = system.Index;
         IIdempotencyStore idempotency = system.Idempotency;
         var step = new GovernedStep<Native.IMembershipManager>(
-            system.NativeEndpoint, system.Serializer, idempotency, keys, index, operationName: nameof(Native.IMembershipManager.Onboard));
+            system.NativeEndpoint, system.Serializer, idempotency, keys, index, operationName: nameof(Native.IMembershipManager.Onboard),
+            clearJournalResult: true);   // the native step result is a PII-free StepReceipt (step name + non-subject detail)
         var termination = new GovernedTermination(system.Erasure, keys, index, system.HeldLog);
 
         // The current Elsa provider (swapped out by the restart-host button). Onboarding flows through whichever
@@ -49,8 +50,9 @@ internal class Program
         ServiceProvider elsa = BuildHost(conn, step, termination);
         await StartHostedAsync(elsa);
 
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         void Connect(ServiceProvider sp) => system.Seam.Connect("onboard",
-            new ElsaWorkflowGateway(sp, nameof(MembershipOnboardWorkflow), idempotency: system.Idempotency),
+            new ElsaWorkflowGateway(sp, nameof(MembershipOnboardWorkflow), idempotency: system.Idempotency, guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
         Connect(elsa);
 

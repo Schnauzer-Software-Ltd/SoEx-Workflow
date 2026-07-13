@@ -36,6 +36,17 @@ public static class RestateWorkflowHost
     private const long MaxRequestBodyBytes = 4 * 1024 * 1024;
 
     /// <summary>
+    /// The wire-contract version this host speaks. The Rust sidecar sends it on every call in the
+    /// <see cref="WireVersionHeader"/> header and this host refuses a mismatch, so a stale sidecar binary cannot
+    /// silently run an old contract. Bump it on any breaking change to the <c>/step</c>/<c>/terminate</c> shapes,
+    /// and rebuild the sidecar in lock-step.
+    /// </summary>
+    public const string WireVersion = "1";
+
+    /// <summary>The header the sidecar carries its <see cref="WireVersion"/> in.</summary>
+    public const string WireVersionHeader = "x-soex-wire-version";
+
+    /// <summary>
     /// Builds the Kestrel step host. <paramref name="stepUrl"/> is where the Restate sidecar reaches back
     /// (STEP_URL), e.g. <c>http://127.0.0.1:9090</c>. <paramref name="authToken"/> is the shared secret
     /// the sidecar must present as <c>Authorization: Bearer &lt;token&gt;</c>; the endpoints run governed
@@ -83,23 +94,36 @@ public static class RestateWorkflowHost
                 return;
             }
 
+            // Wire-contract handshake: the sidecar sends its contract version on every call, and this host
+            // refuses a mismatch (or a sidecar too old to send it). Without this a stale sidecar binary silently
+            // runs the old contract against a new host — the exact failure the sidecar README warned about.
+            string presentedVersion = context.Request.Headers[WireVersionHeader].ToString();
+            if (presentedVersion != WireVersion)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsync(
+                    $"wire-contract version mismatch: this host speaks '{WireVersion}', the sidecar sent '{(presentedVersion.Length == 0 ? "(none)" : presentedVersion)}'. Rebuild the Restate sidecar against this host.");
+                return;
+            }
+
             await next();
         });
 
         app.MapPost("/step", async (StepRequest req) =>
         {
-            // The instance id is journaled in clear by Restate (the caller keys the workflow, which the
-            // framework cannot intercept), so reject it here — before the step runs — if it carries the subject.
-            byte[]? ambient = step.AmbientOf(req.InstanceId, req.Payload);
-            step.GuardVisibleName(req.InstanceId, ambient);
-
+            // Compute the ambient and guard the in-clear instance id (journaled by Restate, which the framework
+            // cannot intercept) INSIDE the try — so a throw here (a decrypt failure, or an id carrying the
+            // subject) is scrubbed by the same catch instead of surfacing to the sidecar's durable state in clear.
+            byte[]? ambient = null;
             WorkflowAction action;
             try
             {
+                ambient = step.AmbientOf(req.InstanceId, req.Payload);
+                step.GuardVisibleName(req.InstanceId, ambient);
                 action = (await step.DispatchGovernedAsync(req.Payload, req.InstanceId, req.Sequence)) as WorkflowAction
                     ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
             }
-            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, ambient, ex))
+            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, req.InstanceId, ambient, ex))
             {
                 // A thrown step surfaces to the Restate sidecar as the failure detail; scrub a message carrying a
                 // subject id (never chained) so it cannot reach Restate's durable invocation state in clear.

@@ -39,7 +39,14 @@ async function post(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${await res.text()}`);
+  if (!res.ok) {
+    // Surface a structured error body's `error` field (e.g. the 409 a deduplicated start returns) rather than
+    // the raw JSON, so the log line reads as a message; fall back to the raw text for plain errors.
+    const raw = await res.text();
+    let detail = raw;
+    try { const j = JSON.parse(raw); if (j && j.error) detail = j.error; } catch { /* not JSON */ }
+    throw new Error(`${res.status} ${res.statusText} — ${detail}`);
+  }
   const txt = await res.text();
   return txt ? JSON.parse(txt) : null;
 }
@@ -109,16 +116,24 @@ const v = (id) => document.getElementById(id).value.trim();
 
 const actions = {
   async startOnboarding() {
-    const id = await trigger('StartOnboarding', { orgId: v('on-org'), email: v('on-email'), offer: v('on-offer') });
-    track('onboard', id); log(`began onboarding → ${id}`, 'ok');
+    const attempt = Number(v('on-attempt')) || 0;
+    const id = await trigger('StartOnboarding', { orgId: v('on-org'), email: v('on-email'), offer: v('on-offer'), attempt });
+    track('onboard', id); log(`began onboarding ${v('on-email')} (attempt ${attempt}) → ${id}`, 'ok');
   },
   async accountVerified() {
-    await trigger('AccountVerified', { orgId: v('on-org'), email: v('on-email') });
+    await trigger('AccountVerified', { orgId: v('on-org'), email: v('on-email'), attempt: Number(v('on-attempt')) || 0 });
     log('raised account-verified', 'ok');
   },
   async inviteAccepted() {
-    await trigger('InviteAccepted', { orgId: v('on-org'), email: v('on-email') });
+    await trigger('InviteAccepted', { orgId: v('on-org'), email: v('on-email'), attempt: Number(v('on-attempt')) || 0 });
     log('raised invite-accepted', 'ok');
+  },
+  // Bump the attempt so the next Start is a fresh run for the SAME org+email — the supported "restart" path:
+  // the identity alone is one-flow-per-subject, so a new run needs a new attempt segment folded into the id.
+  newAttempt() {
+    const el = document.getElementById('on-attempt');
+    el.value = (Number(el.value) || 0) + 1;
+    log(`attempt bumped to ${el.value} — Start onboarding to run it`, 'ok');
   },
   async startRenewal() {
     const id = await trigger('StartRenewal', { subscriberId: v('sub-id') });

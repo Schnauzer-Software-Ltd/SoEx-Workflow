@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deterministic end-to-end smoke for every example host, one runtime at a time:
-#   StartOnboarding -> status(keyLive:true) -> erase -> status(keyLive:false)
+#   Trigger(StartOnboarding) -> status(keyLive:true) -> erase -> status(keyLive:false)
 #
 # Two backend-timing facts make a naive "start, then erase once" flaky; this driver gates on the
 # actual ready/done signals instead of fixed sleeps, so it never flakes:
@@ -17,6 +17,9 @@ BUILD=1; HOSTS_ARG=()
 for a in "$@"; do case "$a" in --no-build) BUILD=0;; *) HOSTS_ARG+=("$a");; esac; done
 declare -A PORT=( [InProc]=5101 [Temporal]=5102 [DurableTask]=5103 [Elsa]=5104 [Restate]=5105 [Zeebe]=5106 )
 ORDER=("${HOSTS_ARG[@]:-InProc Temporal DurableTask Elsa Restate Zeebe}"); ORDER=(${ORDER[@]})
+# The manager exposes one polymorphic operation, Trigger(TriggerBase); the start case is a nested record whose
+# full name is the $type discriminator. POST it to /IMembershipManager/Trigger; the reply is the bare instance id.
+TYPE='PiiMaker.Manager.Membership.Interface.TriggerBase+StartOnboarding'
 
 [ "$BUILD" = 1 ] && { echo "building examples..."; dotnet build examples/SoEx.Workflow.Examples.sln -v q --nologo >/dev/null || { echo "build failed"; exit 1; }; }
 
@@ -37,8 +40,9 @@ for H in "${ORDER[@]}"; do
   # 2) retry StartOnboarding until a valid id (handles the Zeebe broker settle + any slow worker connect; up to ~40s)
   ID=""
   for i in $(seq 1 20); do
-    ID=$(curl -s -m12 -X POST "http://localhost:$P/IMembershipEntry/StartOnboarding" \
-          -H 'Content-Type: application/json' -d "{\"orgId\":\"org-1\",\"email\":\"$EMAIL\",\"offer\":\"pro\"}" | tr -d '"')
+    ID=$(curl -s -m12 -X POST "http://localhost:$P/IMembershipManager/Trigger" \
+          -H 'Content-Type: application/json' \
+          -d "{\"\$type\":\"$TYPE\",\"orgId\":\"org-1\",\"email\":\"$EMAIL\",\"offer\":\"pro\",\"attempt\":0}" | tr -d '"')
     [[ "$ID" == onboard-* ]] && break; sleep 2
   done
   S1=$(curl -s -m8 "http://localhost:$P/example/status/$ID" 2>/dev/null)

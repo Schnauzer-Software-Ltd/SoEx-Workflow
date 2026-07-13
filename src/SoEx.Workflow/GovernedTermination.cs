@@ -18,7 +18,9 @@ public sealed class GovernedTermination
     private readonly IErasureEvent _contracts;
     private readonly TerminationCoordinator _termination;
 
-    public GovernedTermination(IErasureEvent? contracts, IInstanceKeyStore keys, ISubjectIndex index, IHeldInstanceRegistry? heldRegistry = null)
+    public GovernedTermination(
+        IErasureEvent? contracts, IInstanceKeyStore keys, ISubjectIndex index,
+        IHeldInstanceRegistry? heldRegistry = null, WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null)
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(index);
@@ -26,11 +28,20 @@ public sealed class GovernedTermination
         _contracts = contracts ?? NoErasureEvent.Instance;
         // heldRegistry lets the maintenance backstop find and re-drive a hold that happened on the natural
         // termination path (not just the erasure/sweep path); null = no held-instance tracking (back-compat).
-        _termination = new TerminationCoordinator(keys, index, heldRegistry: heldRegistry);
+        // tombstone (when wired) makes an erasure final — a re-mint after the shred is refused at the sealer.
+        _termination = new TerminationCoordinator(keys, index, heldRegistry: heldRegistry, metrics: metrics, tombstone: tombstone);
     }
 
     public Task<TerminationOutcome> TerminateAsync(string instanceId, IdempotencyKey key, TerminationTrigger trigger) =>
         _termination.TerminateAsync(instanceId, _contracts, key, trigger);
+
+    /// <summary>
+    /// Park a failing instance with its key retained (park-before-shred) instead of crypto-shredding it on the
+    /// failure path. A driver's failure catch calls this — a transient step failure must not destroy the sealed
+    /// journal; the instance is quarantined (held) for an audited re-drive or a deliberate terminate.
+    /// </summary>
+    public Task<TerminationOutcome> QuarantineAsync(string instanceId, IdempotencyKey key, int attempts, Exception error) =>
+        _termination.QuarantineAsync(instanceId, _contracts, key, attempts, error);
 
     /// <summary>The default for an instance with no retention obligation: extract is a no-op that always succeeds, so termination still shreds the key.</summary>
     private sealed class NoErasureEvent : IErasureEvent

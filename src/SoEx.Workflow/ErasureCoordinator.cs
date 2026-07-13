@@ -57,7 +57,8 @@ public sealed class ErasureCoordinator(
     IEnumerableInstanceKeyStore? liveInstances = null,
     TimeProvider? time = null,
     IHeldInstanceRegistry? heldRegistry = null,
-    IErasureRequestRegistry? requestRegistry = null)
+    IErasureRequestRegistry? requestRegistry = null,
+    WorkflowMetrics? metrics = null)
 {
     /// <param name="request">The erasure request (its <c>ReceivedAt</c> anchors the legal clock).</param>
     /// <param name="resolve">
@@ -289,7 +290,14 @@ public sealed class ErasureCoordinator(
     /// cannot resolve is reported (<see cref="ErasureState.Requested"/>) and left for a later pass,
     /// never silently dropped — its key survives until it can be resolved and driven.
     /// </param>
-    public async Task<SweepReport> SweepAsync(TimeSpan olderThan, Func<string, ErasureTarget?> resolve)
+    /// <param name="maxInstances">
+    /// Bounds one pass to at most this many aged instances (resolved or unresolved), so a fleet-scale backlog is
+    /// drained over several passes instead of one unbounded pass that could itself become an incident. The
+    /// remainder is picked up next pass. Null = no bound (drain everything this pass).
+    /// </param>
+    /// <param name="cancellationToken">Stops the sweep between instances — the work already done stands and is reported.</param>
+    public async Task<SweepReport> SweepAsync(
+        TimeSpan olderThan, Func<string, ErasureTarget?> resolve, int? maxInstances = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(resolve);
         if (liveInstances is null)
@@ -303,16 +311,26 @@ public sealed class ErasureCoordinator(
 
         foreach (LiveInstance live in liveInstances.LiveInstances())
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (live.MintedAt >= cutoff)
             {
                 // still within its legitimate lifetime window — a running flow, not an abandoned one
                 continue;
             }
 
+            if (maxInstances is { } cap && outcomes.Count >= cap)
+            {
+                // bounded batch spent — leave the rest of the aged set for the next pass rather than run the
+                // whole backlog (and every synchronous store round-trip it entails) in a single unbounded pass.
+                break;
+            }
+
             if (resolve(live.InstanceId) is not { } target)
             {
                 // unresolved — surfaced, never silently dropped; the key survives for a later pass
                 outcomes.Add(new InstanceErasureOutcome(live.InstanceId, ErasureAction.ForceTerminate, ErasureState.Requested));
+                metrics?.Swept(ErasureState.Requested);
                 continue;
             }
 
@@ -320,6 +338,7 @@ public sealed class ErasureCoordinator(
                 target.InstanceId, target.Contracts, target.IdempotencyKey, TerminationTrigger.ErasureRequest);
             ErasureState state = outcome == TerminationOutcome.Terminated ? ErasureState.Complete : ErasureState.Held;
             outcomes.Add(new InstanceErasureOutcome(live.InstanceId, ErasureAction.ForceTerminate, state));
+            metrics?.Swept(state);
         }
 
         return new SweepReport(outcomes);

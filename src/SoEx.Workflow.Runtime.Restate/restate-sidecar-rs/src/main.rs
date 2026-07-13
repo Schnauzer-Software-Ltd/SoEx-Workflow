@@ -148,10 +148,17 @@ struct ActionDto {
 /// forwarded verbatim — the sidecar never inspects or mutates it — with the shared bearer token attached;
 /// a non-2xx response surfaces as an error (caught by the durable `ctx.run`). Extracted so the transport/auth
 /// contract is integration-testable against a mock host without the restate runtime.
+/// The wire-contract version this sidecar speaks, sent on every call so the .NET host can refuse a stale
+/// binary running an old contract. Must match `RestateWorkflowHost.WireVersion` on the .NET side; bump both in
+/// lock-step on any breaking change to the /step or /terminate request/response shapes.
+const WIRE_VERSION: &str = "1";
+const WIRE_VERSION_HEADER: &str = "x-soex-wire-version";
+
 async fn call_step(client: &reqwest::Client, step_url: &str, token: &str, req: &StepRequest) -> reqwest::Result<ActionDto> {
     client
         .post(format!("{step_url}/step"))
         .bearer_auth(token)
+        .header(WIRE_VERSION_HEADER, WIRE_VERSION)
         .json(req)
         .send()
         .await?
@@ -166,6 +173,7 @@ async fn call_terminate(client: &reqwest::Client, step_url: &str, token: &str, r
     client
         .post(format!("{step_url}/terminate"))
         .bearer_auth(token)
+        .header(WIRE_VERSION_HEADER, WIRE_VERSION)
         .json(req)
         .send()
         .await?
@@ -472,7 +480,11 @@ impl NativeOnboardWorkflow for NativeOnboardWorkflowImpl {
 /// additionally trust a private CA (self-managed / internal PKI). A bad STEP_CA_CERT is fatal at startup
 /// rather than silently falling back to an untrusted connection.
 fn build_client() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder();
+    // A per-request timeout on the /step and /terminate callbacks so a hung .NET step host does not hang the
+    // Restate invocation indefinitely — the call fails and Restate's own retry drives it, instead of a stuck
+    // invocation with no upper bound. Override with STEP_TIMEOUT_SECS (default 60).
+    let timeout_secs = std::env::var("STEP_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60u64);
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
     if let Ok(ca_path) = std::env::var("STEP_CA_CERT") {
         let pem = std::fs::read(&ca_path)
             .unwrap_or_else(|e| panic!("STEP_CA_CERT '{ca_path}' is unreadable: {e}"));

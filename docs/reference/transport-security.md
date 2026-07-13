@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> This file was LLM generated and is pending editing by the project maintainer.
-
 # Transport security
 
 Crypto-shred is a data-at-rest guarantee: every payload SoEx journals is sealed, and destroying the

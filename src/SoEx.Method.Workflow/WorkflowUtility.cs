@@ -35,7 +35,7 @@ public sealed class WorkflowUtility(
 {
     // ---- SubSystem face: what the manager proxies to -------------------------------------------------
 
-    public async Task StartAsync(string flowKey, string instanceId, string subject, object firstStep)
+    public async Task<SubSystem.StartOutcome> StartAsync(string flowKey, string instanceId, string subject, object firstStep)
     {
         // The instance id is journaled in clear by the backend the moment Start is called and survives the
         // shred, so reject one that carries the start subject here — at the consumer-facing seam, before the
@@ -46,7 +46,19 @@ public sealed class WorkflowUtility(
         WorkflowSeam.FlowSeam flow = seam.For(flowKey);
         byte[] seed = flow.Sealer.Seal(instanceId, firstStep,
             WorkflowEnvelope.AmbientFor(flow.Serializer, SubjectContext.Managed(subject)));
-        await flow.Gateway.StartAsync(instanceId, seed);
+        try
+        {
+            await flow.Gateway.StartAsync(instanceId, seed);
+            return new SubSystem.StartOutcome(AlreadyExists: false);
+        }
+        catch (WorkflowInstanceAlreadyExistsException)
+        {
+            // A run already owns this id. The seal above re-derives the existing instance's key (get-or-create),
+            // so nothing is minted or overwritten — reporting the outcome as data is the whole point: it must
+            // survive the proxy boundary back to the manager, where an exception would be decoupled to a generic
+            // fault the caller can't act on.
+            return new SubSystem.StartOutcome(AlreadyExists: true);
+        }
     }
 
     public Task RaiseEventAsync(string flowKey, string instanceId, string eventName)

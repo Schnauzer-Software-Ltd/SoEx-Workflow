@@ -40,7 +40,9 @@ internal class Program
         const string stepUrl = "http://127.0.0.1:9091";     // native /gov-step callback host (test uses :9090)
         const string portableStepUrl = "http://127.0.0.1:9092";   // portable /step+/terminate callback host (renewal)
         const int sidecarPort = 9081;
-        const string token = "pii-example-token";           // shared secret: Restate sidecar <-> .NET callback host
+        // Shared secret: Restate sidecar <-> .NET callback host. Env-sourced so a deployment supplies a real
+        // secret; the dev fallback keeps the example runnable out of the box (never use it in production).
+        string token = Environment.GetEnvironmentVariable("PIIMAKER_STEP_TOKEN") ?? "pii-example-token";
         const string subSystem = "membership";
         int port = args is [var p, ..] && int.TryParse(p, out int n) ? n : 5004;
 
@@ -93,7 +95,7 @@ internal class Program
         var termination = new GovernedTermination(system.Erasure, keys, index, system.HeldLog);
         // Onboarding + offboarding are NATIVE here; only renewal uses the PORTABLE flow. Each governed step
         // binds the seam (and endpoint) of the contract that owns its operation.
-        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op);
+        GovernedStep<Native.IMembershipManager> NativeStep(string op) => new(system.NativeEndpoint, system.Serializer, idempotency, keys, index, op, clearJournalResult: true);   // native result = PII-free StepReceipt
         GovernedStep<Portable.IMembershipManager> PortableStep(string op) => new(system.PortableEndpoint, system.Serializer, idempotency, keys, index, op);
 
         var onboardStep = NativeStep(nameof(Native.IMembershipManager.Onboard));
@@ -119,11 +121,12 @@ internal class Program
 
         // Wire the seam: native onboarding (start + raise on MembershipOnboard) and native offboarding (the
         // consumer-authored fan-out service); portable renewal via the generic MembershipPortable flow.
-        system.Seam.Connect("onboard", new RestateWorkflowGateway(new Uri(ingress), "MembershipOnboard"),
+        var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
+        system.Seam.Connect("onboard", new RestateWorkflowGateway(new Uri(ingress), "MembershipOnboard", guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
         system.Seam.Connect("offboard", new RestateOffboardGateway(http, ingress),
             new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);
-        system.Seam.Connect("renew", new RestateWorkflowGateway(new Uri(ingress), "MembershipPortable"),
+        system.Seam.Connect("renew", new RestateWorkflowGateway(new Uri(ingress), "MembershipPortable", guard: sealGuard),
             new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
 
         WebApplicationBuilder webBuilder = MembershipWebHost.Create(port);

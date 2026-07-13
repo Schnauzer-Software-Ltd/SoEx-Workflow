@@ -15,7 +15,8 @@ public enum TerminationOutcome
 /// </summary>
 public sealed class TerminationCoordinator(
     IInstanceKeyStore keys, ISubjectIndex index, int maxRetainingAttempts = 3, Func<int, Task>? backoffDelay = null,
-    IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null)
+    IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null, WorkflowMetrics? metrics = null,
+    IErasureTombstone? tombstone = null)
 {
     public async Task<TerminationOutcome> TerminateAsync(
         string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey, TerminationTrigger trigger)
@@ -33,6 +34,7 @@ public sealed class TerminationCoordinator(
             // personal-data linkage persists.
             index.RemoveInstance(instanceId);
             heldRegistry?.Clear(instanceId); // it terminated (here or elsewhere) — drop any stale held entry.
+            RecordErasureTombstone(instanceId, trigger); // a redelivered erasure still tombstones (idempotent).
             return TerminationOutcome.Terminated;
         }
 
@@ -55,6 +57,7 @@ public sealed class TerminationCoordinator(
                     await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
                     heldRegistry?.Record(new HeldInstance(
                         instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
+                    metrics?.ShredHeld();
                     return TerminationOutcome.Held;
                 }
 
@@ -69,12 +72,50 @@ public sealed class TerminationCoordinator(
         index.RemoveInstance(instanceId);
         await contracts.OnTerminated(new TerminatedContext(instanceId));
         heldRegistry?.Clear(instanceId); // a re-drive that finally succeeded clears the quarantine.
+        RecordErasureTombstone(instanceId, trigger);
+        metrics?.ShredCompleted();
         return TerminationOutcome.Terminated;
+    }
+
+    // A tombstone is recorded only for an ERASURE (a subject request or the abandoned-instance sweep, both
+    // TerminationTrigger.ErasureRequest) so a raise arriving after that shred cannot re-mint and resurrect the
+    // flow. A natural completion does NOT tombstone — a completed logical id may legitimately be re-onboarded as
+    // a fresh generation. No-op when no tombstone is wired.
+    private void RecordErasureTombstone(string instanceId, TerminationTrigger trigger)
+    {
+        if (trigger == TerminationTrigger.ErasureRequest)
+        {
+            tombstone?.Record(instanceId);
+        }
     }
 
     /// <summary>The audited human override: re-drive a held instance back into <c>OnRetaining</c>.</summary>
     public Task<TerminationOutcome> ReDriveAsync(string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey)
         => TerminateAsync(instanceId, contracts, idempotencyKey, TerminationTrigger.ErasureRequest);
+
+    /// <summary>
+    /// Park a <b>failing</b> (not completing) instance instead of terminating it — the step-failure analogue of
+    /// the retention-obligation hold. The key is <b>retained</b>, the instance is recorded held with the
+    /// scrubbed failure, and <c>OnRetentionHeld</c> fires. No crypto-shred runs, so a transient step failure can
+    /// never destroy the sealed journal; recovery is a re-drive (resume) or a deliberate terminate (which then
+    /// shreds). Idempotent: if the instance already terminated (completed/erased) its key is gone, so there is
+    /// nothing to park and any stale held entry is cleared.
+    /// </summary>
+    public async Task<TerminationOutcome> QuarantineAsync(
+        string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey, int attempts, Exception error)
+    {
+        if (!keys.Has(instanceId))
+        {
+            heldRegistry?.Clear(instanceId);
+            return TerminationOutcome.Terminated;
+        }
+
+        string safeError = SafeHeldError(instanceId, error);
+        await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
+        heldRegistry?.Record(new HeldInstance(instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
+        metrics?.ShredHeld();
+        return TerminationOutcome.Held;
+    }
 
     // The held log is durable and survives the shred, so a raw exception message carrying a subject id would
     // outlive the key that could shred it. Pass it through the same substring guard the framework applies to
