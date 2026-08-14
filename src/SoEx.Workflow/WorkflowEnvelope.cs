@@ -16,7 +16,7 @@ public static class WorkflowEnvelope
         serializer.Serialize(new InvocationRequest
         {
             ActivityId = null,
-            TResult = typeof(WorkflowAction),
+            HasResult = true,
             MethodName = operationName,
             Arguments = [stepDto],
             AmbientContext = ambientContext,
