@@ -4,16 +4,16 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
-  <!-- SoEx runtime, public nuget.org @ alpha-3.2 (exact-pinned; unlisted prerelease). -->
+  <!-- SoEx runtime, public nuget.org @ alpha-3.4 (exact-pinned; unlisted prerelease). -->
   <ItemGroup>
-    <PackageVersion Include="SoEx.Abstractions" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Topology" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Context" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Container" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Proxy" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Endpoint" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Hosting" Version="0.0.0-alpha-3.3" />
-    <PackageVersion Include="SoEx.Transport.InProc" Version="0.0.0-alpha-3.3" />
+    <PackageVersion Include="SoEx.Abstractions" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Topology" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Context" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Container" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Proxy" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Endpoint" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Hosting" Version="0.0.0-alpha-3.4" />
+    <PackageVersion Include="SoEx.Transport.InProc" Version="0.0.0-alpha-3.4" />
   </ItemGroup>
 
   <!-- Engine adapters: latest at first use (D5). -->
