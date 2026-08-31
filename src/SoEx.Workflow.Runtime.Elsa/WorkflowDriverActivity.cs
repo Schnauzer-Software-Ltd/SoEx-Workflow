@@ -1,3 +1,4 @@
+using Elsa.Extensions;
 using Elsa.Workflows;
 using Elsa.Workflows.Models;
 using SoEx.Workflow;
@@ -9,36 +10,78 @@ namespace SoEx.Workflow.Runtime.Elsa;
 /// step loop directly (Elsa is checkpoint/resume, not replay, so side effects run once) and suspends on
 /// an Elsa <b>bookmark</b> for each wait/timer, resuming the loop on the callback. The entrypoint's step
 /// operation returns a <see cref="WorkflowAction"/>; saga state threads through the bookmark resume input.
-/// The per-run governed-step core is held on the (reused, in-memory) instance. Use this or the native
-/// flow (a registered Elsa workflow of governed steps + <see cref="GovernedTerminationActivity"/>), never both.
+/// Use this or the native flow (a registered Elsa workflow of governed steps +
+/// <see cref="GovernedTerminationActivity"/>), never both.
+/// <para>
+/// The governed core and the per-instance values are resolved <b>per run</b> unless supplied on the activity.
+/// That is what lets the driver sit in a <b>registered</b> definition (<c>module.AddWorkflow&lt;T&gt;()</c>):
+/// a registered definition is built once, with no access to run input, and a rehydrated instance on a fresh
+/// host holds no live object references at all. So <see cref="Step"/>/<see cref="Termination"/> fall back to
+/// DI (<see cref="ElsaWorkflowHost.BuildDurable"/> registers both), the saga id falls back to the Elsa
+/// <b>correlation id</b> (the id governance is anchored on, which <see cref="ElsaWorkflowGateway"/> sets at
+/// start), and the seed falls back to the <c>seed</c> workflow input. Supplying them explicitly — as
+/// <see cref="ElsaTestWorkflowHost"/> does for a per-run driver on the in-memory host — keeps the old
+/// behaviour unchanged.
+/// </para>
 /// </summary>
 public sealed class WorkflowDriverActivity : Activity
 {
     private const string TimerBookmark = "__timer";
     private const string SequenceProperty = "soex:sequence";
 
-    public required IGovernedStep Step { get; init; }
-    public required GovernedTermination Termination { get; init; }
-    public required string SagaInstanceId { get; init; }
-    public required byte[] Seed { get; init; }
+    /// <summary>The workflow input carrying the base64 sealed seed when <see cref="Seed"/> is not supplied.</summary>
+    public const string SeedInput = "seed";
+
+    /// <summary>The workflow variable the completed (PII-free) result is published to, for a registered definition.</summary>
+    public const string ResultVariable = "soex:result";
+
+    /// <summary>The governed step. Optional: falls back to the <see cref="IGovernedStep"/> registered in DI.</summary>
+    public IGovernedStep? Step { get; init; }
+
+    /// <summary>The governed termination. Optional: falls back to the <see cref="GovernedTermination"/> registered in DI.</summary>
+    public GovernedTermination? Termination { get; init; }
+
+    /// <summary>The logical saga id governance anchors on. Optional: falls back to the Elsa correlation id.</summary>
+    public string? SagaInstanceId { get; init; }
+
+    /// <summary>The sealed start state. Optional: falls back to the base64 <c>seed</c> workflow input.</summary>
+    public byte[]? Seed { get; init; }
 
     /// <summary>The per-step failure policy: bounded retry, then park-before-shred. Defaults to the cross-runtime default.</summary>
     public WorkflowStepOptions Options { get; init; } = WorkflowStepOptions.Default;
 
+    /// <summary>
+    /// The completed result, for a host that holds this driver instance across the whole run (see
+    /// <see cref="ElsaTestWorkflowHost"/>). A registered definition materialises a fresh activity object per
+    /// run, so nothing can read this field there — the same value is published to the
+    /// <see cref="ResultVariable"/> workflow variable, which is durable and survives the run.
+    /// </summary>
     public byte[]? Result { get; private set; }
 
     private long _sequence;
 
+    /// <summary>The governed core plus the saga id for one run, resolved from the activity or the run context.</summary>
+    private readonly record struct Bound(IGovernedStep Step, GovernedTermination Termination, string SagaInstanceId);
+
+    private Bound Resolve(ActivityExecutionContext context) => new(
+        Step ?? context.GetRequiredService<IGovernedStep>(),
+        Termination ?? context.GetRequiredService<GovernedTermination>(),
+        SagaInstanceId ?? (context.WorkflowExecutionContext.CorrelationId is { Length: > 0 } correlation
+            ? correlation
+            : throw new InvalidOperationException(
+                $"the portable Elsa driver has no saga id: set {nameof(SagaInstanceId)} on the activity, or start the "
+                + "instance with the logical id as the Elsa correlation id (which ElsaWorkflowGateway.StartAsync does)")));
+
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        await DriveAsync(context, Seed);
+        await DriveAsync(context, Resolve(context), Seed ?? DecodeInput(context, SeedInput));
     }
 
-    private async ValueTask DriveAsync(ActivityExecutionContext context, byte[] current)
+    private async ValueTask DriveAsync(ActivityExecutionContext context, Bound bound, byte[] current)
     {
         try
         {
-            await StepLoopAsync(context, current);
+            await StepLoopAsync(context, bound, current);
         }
         catch (Exception error)
         {
@@ -47,25 +90,28 @@ public sealed class WorkflowDriverActivity : Activity
             // blip). The suspend paths (wait/delay) return normally and Loop stays in the loop, so only a real
             // failure reaches here. Recovery is a re-drive or a deliberate terminate; idempotent if a Complete
             // already shredded (key gone → the coordinator no-ops).
-            await Termination.QuarantineAsync(
-                SagaInstanceId, new IdempotencyKey(SagaInstanceId, "terminal", _sequence), Options.EffectiveMaxAttempts, error);
+            await bound.Termination.QuarantineAsync(
+                bound.SagaInstanceId, new IdempotencyKey(bound.SagaInstanceId, "terminal", _sequence),
+                Options.EffectiveMaxAttempts, error);
             throw;
         }
     }
 
-    private async ValueTask StepLoopAsync(ActivityExecutionContext context, byte[] current)
+    private async ValueTask StepLoopAsync(ActivityExecutionContext context, Bound bound, byte[] current)
     {
+        (IGovernedStep step, _, string sagaInstanceId) = bound;
+
         while (true)
         {
             long seq = _sequence++;
-            byte[]? ambient = Step.AmbientOf(SagaInstanceId, current);
+            byte[]? ambient = step.AmbientOf(sagaInstanceId, current);
 
             WorkflowAction action;
             try
             {
-                action = await DispatchWithRetryAsync(current, seq);
+                action = await DispatchWithRetryAsync(bound, current, seq);
             }
-            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(Step, SagaInstanceId, ambient, ex))
+            catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, sagaInstanceId, ambient, ex))
             {
                 // Elsa persists a faulted activity's exception message in clear, and it survives the shred, so a
                 // step exception carrying a subject id is replaced before it reaches the catch in DriveAsync that
@@ -76,21 +122,24 @@ public sealed class WorkflowDriverActivity : Activity
             switch (action)
             {
                 case WorkflowAction.Complete complete:
-                    await Termination.TerminateAsync(SagaInstanceId, Step.KeyFor(current, SagaInstanceId, seq), TerminationTrigger.NaturalCompletion);
+                    await bound.Termination.TerminateAsync(
+                        sagaInstanceId, step.KeyFor(current, sagaInstanceId, seq), TerminationTrigger.NaturalCompletion);
                     // The result is journaled in clear and escapes the shred, so it must not carry the subject.
-                    Result = Step.GuardResultPiiFree(Step.Serializer.Serialize(complete.Result), ambient);
+                    Result = step.GuardResultPiiFree(step.Serializer.Serialize(complete.Result), ambient);
+                    // Published durably too: a registered definition discards this activity object after the run.
+                    context.SetVariable(ResultVariable, Convert.ToBase64String(Result));
                     await context.CompleteActivityAsync();
                     return;
 
                 case WorkflowAction.RaiseIntoNext raise:
-                    current = Step.SealStep(SagaInstanceId, raise.NextStep, ambient);
+                    current = step.SealStep(sagaInstanceId, raise.NextStep, ambient);
                     continue;
 
                 case WorkflowAction.WaitForEvent wait:
                     // The bookmark name is journaled in clear, so it must not carry the subject. The
                     // wait's OnEvent continuation is sealed now and journaled on the bookmark, so a
                     // event raised with no payload resumes into it (mirror of the timer's onTimeout).
-                    string eventName = Step.GuardVisibleName(wait.EventName, ambient);
+                    string eventName = step.GuardVisibleName(wait.EventName, ambient);
                     Suspend(context);
                     context.CreateBookmark(new CreateBookmarkArgs
                     {
@@ -98,7 +147,7 @@ public sealed class WorkflowDriverActivity : Activity
                         Stimulus = eventName,
                         Callback = OnResume,
                         AutoBurn = true,
-                        Metadata = new Dictionary<string, string> { ["onEvent"] = Convert.ToBase64String(wait.OnEvent is { } oe ? Step.SealStep(SagaInstanceId, oe, ambient) : []) },
+                        Metadata = new Dictionary<string, string> { ["onEvent"] = Convert.ToBase64String(wait.OnEvent is { } oe ? step.SealStep(sagaInstanceId, oe, ambient) : []) },
                     });
                     if (wait.Timeout is { } timeout)
                     {
@@ -108,7 +157,7 @@ public sealed class WorkflowDriverActivity : Activity
                             Stimulus = $"{TimerBookmark}:{_sequence}",
                             Callback = OnResume,
                             AutoBurn = true,
-                            Metadata = TimerMetadata(timeout, wait.OnTimeout is { } ot ? Step.SealStep(SagaInstanceId, ot, ambient) : []),
+                            Metadata = TimerMetadata(timeout, wait.OnTimeout is { } ot ? step.SealStep(sagaInstanceId, ot, ambient) : []),
                         });
                     }
                     return;
@@ -126,7 +175,7 @@ public sealed class WorkflowDriverActivity : Activity
                     return;
 
                 case WorkflowAction.Loop loop:
-                    current = Step.SealStep(SagaInstanceId, loop.CarryState, ambient);
+                    current = step.SealStep(sagaInstanceId, loop.CarryState, ambient);
                     continue;
 
                 default:
@@ -140,7 +189,7 @@ public sealed class WorkflowDriverActivity : Activity
     // terminal) the exception propagates to the journal-safety scrub and then to DriveAsync's catch, which
     // parks the instance. Retry backoff is a real in-execution wait; a redelivered activity re-enters fresh,
     // and the step's idempotency (when wired) collapses a re-run that already recorded its effect.
-    private async ValueTask<WorkflowAction> DispatchWithRetryAsync(byte[] current, long seq)
+    private async ValueTask<WorkflowAction> DispatchWithRetryAsync(Bound bound, byte[] current, long seq)
     {
         int attempt = 0;
         while (true)
@@ -148,8 +197,8 @@ public sealed class WorkflowDriverActivity : Activity
             attempt++;
             try
             {
-                return (await Step.DispatchGovernedAsync(current, SagaInstanceId, seq)) as WorkflowAction
-                    ?? throw new InvalidOperationException($"the '{Step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
+                return (await bound.Step.DispatchGovernedAsync(current, bound.SagaInstanceId, seq)) as WorkflowAction
+                    ?? throw new InvalidOperationException($"the '{bound.Step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
             }
             catch (Exception ex) when (Options.ShouldRetry(attempt, ex))
             {
@@ -169,10 +218,16 @@ public sealed class WorkflowDriverActivity : Activity
         ["onTimeout"] = Convert.ToBase64String(onTimeoutSealed),
     };
 
+    private static byte[] DecodeInput(ActivityExecutionContext context, string key)
+    {
+        string b64 = context.WorkflowInput.TryGetValue(key, out object? value) ? value?.ToString() ?? "" : "";
+        return string.IsNullOrEmpty(b64) ? [] : Convert.FromBase64String(b64);
+    }
+
     /// <summary>
-    /// Persists the per-step sequence into the (durable) activity context before suspending. A resume may
-    /// land on a rehydrated activity object whose <see cref="_sequence"/> field is fresh; without this the
-    /// resumed loop would reuse spent sequence numbers and collide idempotency keys with already-run steps.
+    /// Persists the per-step sequence into the (durable) activity context before suspending. A resume lands on
+    /// a rehydrated activity object whose <see cref="_sequence"/> field is fresh; without this the resumed loop
+    /// would reuse spent sequence numbers and collide idempotency keys with already-run steps.
     /// </summary>
     private void Suspend(ActivityExecutionContext context) =>
         context.Properties[SequenceProperty] = _sequence.ToString();
@@ -185,8 +240,6 @@ public sealed class WorkflowDriverActivity : Activity
             _sequence = sequence;
         }
 
-        string b64 = context.WorkflowInput.TryGetValue("payload", out object? value) ? value?.ToString() ?? "" : "";
-        byte[] payload = string.IsNullOrEmpty(b64) ? [] : Convert.FromBase64String(b64);
-        await DriveAsync(context, payload);
+        await DriveAsync(context, Resolve(context), DecodeInput(context, "payload"));
     }
 }

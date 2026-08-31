@@ -118,7 +118,13 @@ non-deterministic and has to stay off the replay path.
 Author a registered Elsa workflow: each governed step is an activity that calls `step.ExecuteAsync`,
 waits are bookmarks, and the flow ends in `GovernedTerminationActivity`. For a durable host, resolve
 `GovernedStep`/`GovernedTermination` from DI inside the activities so a rehydrated instance on a fresh
-host gets them.
+host gets them; `GovernedTerminationActivity` does that itself when you leave `Termination` unset.
+
+Anchor every step and the termination on the **same id you sealed under**. Elsa mints its own instance id
+per create, which is not that id, so the anchor is the correlation id — what `ElsaWorkflowGateway` sets at
+start, and what `GovernedTerminationActivity` shreds under. Anchoring on `WorkflowExecutionContext.Id`
+instead looks up a key that was never minted: termination appears to run and the crypto-shred silently
+does nothing.
 
 > Native-flow variables need `.WithWorkflowStorage()` in your Elsa registration for the flow's own variables
 > to persist and rehydrate across a suspend/resume; without it a native Elsa flow that carries state between
@@ -135,12 +141,12 @@ var workflow = new Workflow
         new GovStep { Step = step, Kind = "lookup", Seq = 0, Seed = seed },
         new WaitEvent { EventName = "invite-accepted" },
         new GovStep { Step = step, Kind = "assign", Seq = 1, Seed = seed },
-        new GovernedTerminationActivity { Termination = termination },
+        new GovernedTerminationActivity(),   // termination from DI, anchored on the correlation id
     } },
 };
-// Run with RunWorkflowOptions.WorkflowInstanceId equal to the id you sealed the seed under, so the
-// governed steps and the termination anchor on the same id.
-// GovStep.ExecuteAsync => Native.RunSealed(Step, ctx.WorkflowExecutionContext.Id, Seq, Kind, Seed)
+// Start with the id you sealed the seed under as the CORRELATION id (ElsaWorkflowGateway.StartAsync does
+// this), so the governed steps and the termination anchor on the same id.
+// GovStep.ExecuteAsync => Native.RunSealed(Step, ctx.WorkflowExecutionContext.CorrelationId!, Seq, Kind, Seed)
 ```
 
 ## Restate (cross-language)

@@ -1,5 +1,6 @@
 using Elsa.Extensions;
 using Elsa.Workflows;
+using SoEx.Workflow.Runtime.Elsa;
 using Elsa.Workflows.Activities;
 using Elsa.Workflows.Memory;
 
@@ -25,7 +26,7 @@ public class MembershipOnboardWorkflow : WorkflowBase
             new GovStep { Kind = "invite", Seq = 2 },
             new WaitEvent { EventName = "invite-accepted" },
             new GovStep { Kind = "assign", Seq = 3 },
-            new GovTermination(),
+            new GovernedTerminationActivity(),   // shipped: termination from DI, anchored on the correlation id
         },
     };
 }

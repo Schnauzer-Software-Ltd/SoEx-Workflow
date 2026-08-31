@@ -58,6 +58,25 @@ For durability, hand the same `(step, termination)` to the shipped builder for y
 
 The governed `(step, termination)` is identical across all of them; only the host builder changes.
 
+On Elsa, the workflow you register is a one-activity definition whose root is the shipped driver:
+
+```csharp
+public class OnboardWorkflow : WorkflowBase
+{
+    protected override void Build(IWorkflowBuilder builder) => builder.Root = new WorkflowDriverActivity();
+}
+```
+
+Set nothing on the driver. A registered definition is built once, with no access to run input, and a
+rehydrated instance on a fresh host holds no live object references — so the driver takes its governed core
+from DI (`BuildDurable` registers both), its saga id from the Elsa correlation id, and its sealed seed from
+the `seed` workflow input. Start and raise through [`ElsaWorkflowGateway`](trigger-flows-from-outside.md),
+which sets those; the completed result is published to the `soex:result` workflow variable.
+
+You can still set `Step`/`Termination`/`SagaInstanceId`/`Seed` on the activity when you build the
+definition per run and hold it yourself, which is what `ElsaTestWorkflowHost` does in-memory. That does
+not survive a restart, so it is not the durable shape.
+
 ### Test hosts
 
 Two runtimes also ship in-memory test hosts, handy for fast, backend-free tests. Nothing survives a
