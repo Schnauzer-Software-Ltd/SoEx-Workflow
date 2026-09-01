@@ -30,7 +30,18 @@ public static class RestateWorkflowHost
     public sealed record TerminateRequest(string InstanceId, long Sequence);
 
     /// <summary>Flattened, language-agnostic view of a <see cref="WorkflowAction"/> for the sidecar.</summary>
-    public sealed record ActionDto(string Kind, byte[] Payload, string EventName, long TimeoutTicks, byte[] OnTimeout, byte[] OnEvent);
+    public sealed record ActionDto(
+        string Kind, byte[] Payload, string EventName, long TimeoutTicks, byte[] OnTimeout, byte[] OnEvent,
+        WaitBranchWire[]? Branches = null)
+    {
+        /// <summary>
+        /// The wait's branches, in declared order. Normalised to empty rather than null because this DTO is
+        /// journaled and, for Restate, crosses a language boundary: the contract on that wire is that an absent
+        /// value is the empty collection, never JSON <c>null</c>. A serialized null decodes as a type error in
+        /// the Rust sidecar, which fails the invocation on EVERY action, not just a wait.
+        /// </summary>
+        public WaitBranchWire[] Branches { get; init; } = Branches ?? [];
+    }
 
     /// <summary>The largest step/terminate request body accepted (envelopes are small; this caps abuse).</summary>
     private const long MaxRequestBodyBytes = 4 * 1024 * 1024;
@@ -41,7 +52,7 @@ public static class RestateWorkflowHost
     /// silently run an old contract. Bump it on any breaking change to the <c>/step</c>/<c>/terminate</c> shapes,
     /// and rebuild the sidecar in lock-step.
     /// </summary>
-    public const string WireVersion = "1";
+    public const string WireVersion = "2";
 
     /// <summary>The header the sidecar carries its <see cref="WireVersion"/> in.</summary>
     public const string WireVersionHeader = "x-soex-wire-version";
@@ -160,15 +171,28 @@ public static class RestateWorkflowHost
     {
         WorkflowAction.Complete c => new("complete", step.GuardResultPiiFree(step.Serializer.Serialize(c.Result), ambient), "", 0, [], []),
         WorkflowAction.RaiseIntoNext r => new("next", step.SealStep(instanceId, r.NextStep, ambient), "", 0, [], []),
-        WorkflowAction.WaitForEvent w => new(
-            "wait",
-            [],
-            step.GuardVisibleName(w.EventName, ambient),
-            w.Timeout?.Ticks ?? -1,
-            w.OnTimeout is { } ot ? step.SealStep(instanceId, ot, ambient) : [],
-            w.OnEvent is { } oe ? step.SealStep(instanceId, oe, ambient) : []),
+        WorkflowAction.WaitForEvent w => Wait(step, instanceId, w, ambient),
         WorkflowAction.Delay d => new("delay", [], "", d.Duration.Ticks, [], []),
         WorkflowAction.Loop l => new("loop", step.SealStep(instanceId, l.CarryState, ambient), "", 0, [], []),
         _ => throw new InvalidOperationException($"unhandled action {action.Kind()}"),
     };
+
+    /// <summary>
+    /// Flattens a wait for the sidecar. Branch 0 is repeated in the legacy eventName/onEvent fields so a
+    /// single-branch wait journaled here still replays if this deploy is rolled back. A sidecar binary too old
+    /// to understand the branch list is refused by the wire-version handshake rather than silently running on
+    /// branch 0 alone, which is the failure the handshake exists to catch.
+    /// </summary>
+    private static ActionDto Wait(IGovernedStep step, string instanceId, WorkflowAction.WaitForEvent w, byte[]? ambient)
+    {
+        WaitBranchWire[] branches = WaitBranches.Flatten(step, instanceId, w, ambient);
+        return new(
+            "wait",
+            [],
+            branches[0].EventName,
+            w.Timeout?.Ticks ?? -1,
+            w.OnTimeout is { } ot ? step.SealStep(instanceId, ot, ambient) : [],
+            branches[0].OnEvent,
+            branches);
+    }
 }

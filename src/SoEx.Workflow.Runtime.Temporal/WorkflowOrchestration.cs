@@ -112,20 +112,31 @@ public sealed class WorkflowOrchestration
 
     private async Task<byte[]> AwaitSignalAsync(WorkflowActionDto wait)
     {
+        WaitBranchWire[] branches = WaitBranches.Of(wait.Branches, wait.EventName, wait.OnEvent);
+        bool AnyDelivered() => branches.Any(b => _events.ContainsKey(b.EventName));
+
         if (wait.TimeoutTicks < 0)
         {
-            await Wf.WaitConditionAsync(() => _events.ContainsKey(wait.EventName));
-            return Raised(wait, Consume(wait.EventName));
+            await Wf.WaitConditionAsync(AnyDelivered);
+            return Resume(branches);
         }
 
-        bool delivered = await Wf.WaitConditionAsync(
-            () => _events.ContainsKey(wait.EventName), TimeSpan.FromTicks(wait.TimeoutTicks));
+        bool delivered = await Wf.WaitConditionAsync(AnyDelivered, TimeSpan.FromTicks(wait.TimeoutTicks));
 
         return delivered
-            ? Raised(wait, Consume(wait.EventName))
+            ? Resume(branches)
             : wait.OnTimeout is { Length: > 0 } ? wait.OnTimeout
             : throw new InvalidOperationException(
-                $"durable timer elapsed waiting for '{wait.EventName}' with no OnTimeout step");
+                $"durable timer elapsed waiting for {WaitBranches.Quoted(branches)} with no OnTimeout step");
+    }
+
+    // Which branch resumed the wait. When more than one of its signals has already been delivered, the FIRST
+    // branch declared wins — a property of the flow, not of Temporal's delivery order. Deterministic: the
+    // scan runs in workflow code over a list rebuilt identically on every replay.
+    private byte[] Resume(WaitBranchWire[] branches)
+    {
+        WaitBranchWire branch = branches.First(b => _events.ContainsKey(b.EventName));
+        return Raised(branch, Consume(branch.EventName));
     }
 
     // Consume the delivered signal so a later wait on the SAME event name blocks for a fresh raise instead of
@@ -137,15 +148,15 @@ public sealed class WorkflowOrchestration
         return payload;
     }
 
-    // A signal raised with a payload carries the next step; one raised empty resumes into the wait's sealed
-    // OnEvent continuation (journaled by the step activity at wait time). With neither a payload nor an OnEvent
-    // step there is nothing to resume into — throw descriptively rather than continuing with empty bytes that
-    // would only fail later at decrypt (matching the InProc driver instead of diverging from it).
-    private static byte[] Raised(WorkflowActionDto wait, byte[]? payload) =>
+    // A signal raised with a payload carries the next step; one raised empty resumes into the continuation its
+    // OWN branch declared (sealed and journaled by the step activity at wait time). With neither a payload nor
+    // an OnEvent step there is nothing to resume into — throw descriptively rather than continuing with empty
+    // bytes that would only fail later at decrypt (matching the InProc driver instead of diverging from it).
+    private static byte[] Raised(WaitBranchWire branch, byte[]? payload) =>
         payload is { Length: > 0 } ? payload
-        : wait.OnEvent is { Length: > 0 } ? wait.OnEvent
+        : branch.OnEvent is { Length: > 0 } ? branch.OnEvent
         : throw new InvalidOperationException(
-            $"'{wait.EventName}' was raised with an empty payload and the wait has no OnEvent step");
+            $"'{branch.EventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
 
     [WorkflowSignal]
     public Task RaiseEvent(string name, byte[] payload, string? raiseId)

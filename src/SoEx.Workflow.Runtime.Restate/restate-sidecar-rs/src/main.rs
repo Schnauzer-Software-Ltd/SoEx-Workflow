@@ -14,6 +14,7 @@
 //! Payloads are opaque base64 strings end to end. The .NET step host URL is STEP_URL (default
 //! http://localhost:9090).
 
+use restate_sdk::context::macro_support::SealedDurableFuture;
 use restate_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -123,6 +124,39 @@ struct TerminateRequest {
     sequence: i64,
 }
 
+/// One branch of a `wait`: the event name that resumes it, plus that branch's pre-sealed on-event
+/// step (base64 envelope), empty when the branch declared none.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WaitBranch {
+    event_name: String,
+    #[serde(default)]
+    on_event: String,
+}
+
+/// The branches a `wait` can be resumed by. A wait journaled before branches existed carries only the
+/// legacy `eventName`/`onEvent` pair, so it reads back as the one-branch wait it is.
+fn wait_branches(dto: &ActionDto) -> Vec<WaitBranch> {
+    let declared = dto.branches.as_deref().unwrap_or(&[]);
+    if declared.is_empty() {
+        vec![WaitBranch {
+            event_name: dto.event_name.clone(),
+            on_event: dto.on_event.clone(),
+        }]
+    } else {
+        declared.to_vec()
+    }
+}
+
+/// Renders a wait's branch names for a diagnostic: `'a'`, or `'a', 'b'` for a multi-branch wait.
+fn quoted_names(branches: &[WaitBranch]) -> String {
+    branches
+        .iter()
+        .map(|b| format!("'{}'", b.event_name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Flattened `WorkflowAction` returned by `/step`. byte[] fields arrive as base64 strings;
 /// unknown JSON fields are dropped by serde.
 #[derive(Serialize, Deserialize)]
@@ -139,9 +173,16 @@ struct ActionDto {
     #[serde(default)]
     on_timeout: String,
     /// The step to resume into when a `wait` signal arrives with an empty payload (base64
-    /// envelope) — the flow's pre-sealed continuation; a non-empty raised payload wins.
+    /// envelope) — the flow's pre-sealed continuation; a non-empty raised payload wins. Carries
+    /// branch 0 of `branches`, so a single-branch wait journaled here still replays after a rollback.
     #[serde(default)]
     on_event: String,
+    /// The branches a `wait` can be resumed by, in declared (tie-break) order. `Option` rather than a
+    /// bare `Vec` so BOTH an absent field (a host deployed before branches) and an explicit JSON `null`
+    /// decode: `serde(default)` alone covers only the absent case, and a null would fail the whole
+    /// invocation with a decode error rather than degrade to no branches.
+    #[serde(default)]
+    branches: Option<Vec<WaitBranch>>,
 }
 
 /// POST a governed step to the .NET step host and return the flattened action. The sealed `payload` is
@@ -151,7 +192,7 @@ struct ActionDto {
 /// The wire-contract version this sidecar speaks, sent on every call so the .NET host can refuse a stale
 /// binary running an old contract. Must match `RestateWorkflowHost.WireVersion` on the .NET side; bump both in
 /// lock-step on any breaking change to the /step or /terminate request/response shapes.
-const WIRE_VERSION: &str = "1";
+const WIRE_VERSION: &str = "2";
 const WIRE_VERSION_HEADER: &str = "x-soex-wire-version";
 
 async fn call_step(client: &reqwest::Client, step_url: &str, token: &str, req: &StepRequest) -> reqwest::Result<ActionDto> {
@@ -242,28 +283,59 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                     ctx.sleep(ticks_to_duration(dto.timeout_ticks)).await?;
                 }
                 "wait" => {
-                    // promise() binds its key to the context lifetime; intern the event name to
-                    // 'static (leaking each distinct name at most once) to satisfy it generically.
-                    let event: &'static str = intern_event_name(dto.event_name.clone())?;
-                    let event_name = dto.event_name.clone();
-                    if dto.timeout_ticks < 0 {
-                        let resolved = ctx.promise::<String>(event).await?;
-                        // an empty raise resumes into the pre-sealed on-event step; a payload wins. With neither
-                        // a payload nor an on-event step there is nothing to resume into — fail descriptively
-                        // rather than continue with an empty envelope that only fails later at decrypt (matching
-                        // the InProc driver instead of diverging from it).
-                        current = resume_or_fail(resolved, dto.on_event, &event_name, "was raised with an empty payload and the wait has no on-event step")?;
-                    } else {
-                        // race the durable promise against a durable timer; if the timer
-                        // wins, resume into the on-timeout step (.NET ticks are 100ns units).
-                        let dur = ticks_to_duration(dto.timeout_ticks);
-                        current = restate_sdk::select! {
-                            resolved = ctx.promise::<String>(event) =>
-                                resume_or_fail(resolved?, dto.on_event, &event_name, "was raised with an empty payload and the wait has no on-event step")?,
-                            _ = ctx.sleep(dur) =>
-                                resume_or_fail(dto.on_timeout, String::new(), &event_name, "timer elapsed with no on-timeout step")?,
-                        };
+                    // Every branch parks on its own durable promise, and they race each other AND the
+                    // timer. `select!` is a fixed-arity macro but the branch count is only known at run
+                    // time, so the race is built the way the SDK's own DurableFuturesUnordered::next
+                    // builds it: one notification handle per future, and the runtime picks the first to
+                    // complete. Handle order is branch order with the timer last, so the winning index
+                    // maps straight back to a branch. promise() binds its key to the context lifetime, so
+                    // each event name is interned to 'static (leaking each distinct name at most once).
+                    let branches = wait_branches(&dto);
+                    let mut promises = Vec::with_capacity(branches.len());
+                    for branch in &branches {
+                        let event: &'static str = intern_event_name(branch.event_name.clone())?;
+                        promises.push(ctx.promise::<String>(event));
                     }
+
+                    let timer = if dto.timeout_ticks < 0 {
+                        None
+                    } else {
+                        Some(ctx.sleep(ticks_to_duration(dto.timeout_ticks)))
+                    };
+
+                    let mut handles: Vec<_> = promises.iter().map(|p| p.handle()).collect();
+                    if let Some(timer) = &timer {
+                        handles.push(timer.handle());
+                    }
+                    let winner = promises[0].inner_context().select(handles).await?;
+
+                    current = if winner < promises.len() {
+                        let branch = branches[winner].clone();
+                        let resolved = promises.swap_remove(winner).await?;
+                        // An empty raise resumes into THAT branch's pre-sealed on-event step; a payload
+                        // wins. With neither there is nothing to resume into — fail descriptively rather
+                        // than continue with an empty envelope that only fails later at decrypt.
+                        resume_or_fail(
+                            resolved,
+                            branch.on_event.clone(),
+                            &branch.event_name,
+                            "was raised with an empty payload and its branch of the wait has no on-event step",
+                        )?
+                    } else {
+                        // Await the winner even when it is the timer: select() reports WHICH future
+                        // completed, and the SDK's own combinators then await that future to consume its
+                        // completion. Skipping it would leave the notification unconsumed in the journal.
+                        timer.expect("a timer index can only win when a timer was armed").await?;
+                        if dto.on_timeout.is_empty() {
+                            return Err(TerminalError::new(format!(
+                                "durable timer elapsed waiting for {} with no on-timeout step",
+                                quoted_names(&branches)
+                            ))
+                            .into());
+                        }
+
+                        dto.on_timeout.clone()
+                    };
                 }
                 "loop" => {
                     // continue-as-new: chain a fresh workflow execution carrying the state,
@@ -629,6 +701,69 @@ mod tests {
         assert_eq!(dto.on_event, "c2VlZA==");
         assert_eq!(dto.payload, "", "absent byte[] fields default to empty, not an error");
         assert_eq!(dto.on_timeout, "");
+    }
+
+    // --- wait branches: the multi-branch shape and its back-compat read ------------------------------
+
+    #[test]
+    fn action_dto_parses_a_branch_per_wait_arm_in_declared_order() {
+        let dto: ActionDto = serde_json::from_str(
+            r#"{"kind":"wait","eventName":"verified","onEvent":"dg==","timeoutTicks":600,
+                "branches":[{"eventName":"verified","onEvent":"dg=="},{"eventName":"resend","onEvent":"cg=="}]}"#,
+        )
+        .unwrap();
+
+        let branches = wait_branches(&dto);
+        assert_eq!(branches.len(), 2);
+        assert_eq!(branches[0].event_name, "verified");
+        assert_eq!(branches[1].event_name, "resend");
+        assert_eq!(branches[1].on_event, "cg==", "each branch carries its own on-event step");
+    }
+
+    #[test]
+    fn a_wait_journaled_before_branches_reads_back_as_one_branch() {
+        // An instance parked by an older host has no branch list in its journal, only the legacy pair.
+        // It has to keep replaying, so the read falls back to the one-branch wait it actually is.
+        let dto: ActionDto =
+            serde_json::from_str(r#"{"kind":"wait","eventName":"invite-accepted","onEvent":"c2VlZA=="}"#).unwrap();
+
+        let branches = wait_branches(&dto);
+        assert_eq!(branches.len(), 1);
+        assert_eq!(branches[0].event_name, "invite-accepted");
+        assert_eq!(branches[0].on_event, "c2VlZA==");
+    }
+
+    #[test]
+    fn an_explicit_json_null_branch_list_decodes_as_no_branches() {
+        // The .NET host normalises this field to an empty array, but a null must not be able to fail the
+        // decode: serde(default) alone covers only an ABSENT field, so a serialized null once broke every
+        // action on this wire, not just a wait. Kept as an Option so both shapes degrade to no branches.
+        let dto: ActionDto =
+            serde_json::from_str(r#"{"kind":"next","payload":"c2VlZA==","branches":null}"#).unwrap();
+
+        assert_eq!(dto.kind, "next");
+        assert!(wait_branches(&dto).len() == 1, "falls back to the legacy single-branch read");
+    }
+
+    #[test]
+    fn a_branch_with_no_on_event_step_defaults_to_empty_not_an_error() {
+        let dto: ActionDto =
+            serde_json::from_str(r#"{"kind":"wait","branches":[{"eventName":"data-only"}]}"#).unwrap();
+
+        let branches = wait_branches(&dto);
+        assert_eq!(branches[0].on_event, "", "a branch expecting a payload declares no continuation");
+    }
+
+    #[test]
+    fn branch_names_render_for_a_diagnostic() {
+        let one = vec![WaitBranch { event_name: "verified".into(), on_event: String::new() }];
+        let two = vec![
+            WaitBranch { event_name: "verified".into(), on_event: String::new() },
+            WaitBranch { event_name: "resend".into(), on_event: String::new() },
+        ];
+
+        assert_eq!(quoted_names(&one), "'verified'");
+        assert_eq!(quoted_names(&two), "'verified', 'resend'");
     }
 
     #[test]

@@ -13,17 +13,82 @@ public abstract record WorkflowAction
     public sealed record Complete(object? Result) : WorkflowAction;
 
     /// <summary>
-    /// Park until the named event is raised. With a <paramref name="Timeout"/>, the
-    /// driver races the event against a durable timer; if the timer wins, the workflow
-    /// resumes into <paramref name="OnTimeout"/> (e.g. a compensation step DTO). With an
-    /// <paramref name="OnEvent"/> continuation, the flow decides at wait time what an
-    /// empty-payload event means: a caller can then raise just the instance id + event
-    /// name with no payload (and no flow knowledge) and the driver resumes into the
-    /// journaled <paramref name="OnEvent"/> step; an event raised <i>with</i> a payload
-    /// still wins, carrying event data into the next step as before. The framework
-    /// envelopes the typed steps — the consumer returns DTOs, not bytes.
+    /// Park until one of the wait's named events is raised. With a <paramref name="Timeout"/>, the
+    /// events race a durable timer; if the timer wins, the workflow resumes into
+    /// <paramref name="OnTimeout"/> (e.g. a compensation step DTO). Each branch carries its own
+    /// <see cref="EventBranch.OnEvent"/> continuation, so the flow decides at wait time what a bare
+    /// (payload-free) raise of that branch means: a caller can then raise just the instance id + event
+    /// name with no payload (and no flow knowledge) and the driver resumes into that branch's journaled
+    /// continuation; an event raised <i>with</i> a payload still wins, carrying event data into the next
+    /// step as before. The framework envelopes the typed steps — the consumer returns DTOs, not bytes.
+    /// <para>
+    /// Branch order is significant: it is the tie-break when more than one of the wait's events is
+    /// already deliverable at wait time, so the first branch declared wins. That makes the choice
+    /// deterministic (and so replay-safe) rather than a race between the runtime's delivery order.
+    /// </para>
     /// </summary>
-    public sealed record WaitForEvent(string EventName, TimeSpan? Timeout = null, object? OnTimeout = null, object? OnEvent = null) : WorkflowAction;
+    public sealed record WaitForEvent : WorkflowAction
+    {
+        /// <summary>
+        /// A wait over one or more branches, each resumable by its own event, all racing the timer.
+        /// <para>
+        /// This is deliberately the type's ONLY constructor. A <see cref="WorkflowAction"/> round-trips
+        /// through the host's message serializer (the step operation returns it as a polymorphic response),
+        /// and a second public constructor leaves the serializer no unambiguous way to rebuild the value —
+        /// so the single-name convenience overload that would otherwise live here cannot exist. It also
+        /// leaves the wait with one internal representation, which is what keeps every adapter reading a
+        /// wait the same way.
+        /// </para>
+        /// </summary>
+        public WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)
+        {
+            ArgumentNullException.ThrowIfNull(Branches);
+            if (Branches.Count == 0)
+            {
+                throw new ArgumentException("a wait needs at least one event branch", nameof(Branches));
+            }
+
+            // A duplicate name is unresolvable, not merely redundant: the event NAME is the delivery key on
+            // every runtime (signal name / external-event name / bookmark name / durable-promise key), so two
+            // branches sharing one could never be told apart at resume. Reject it at the flow, where the
+            // author can see it, rather than letting one branch silently shadow the other at runtime.
+            for (int i = 0; i < Branches.Count; i++)
+            {
+                if (string.IsNullOrEmpty(Branches[i].EventName))
+                {
+                    throw new ArgumentException("an event branch needs a name", nameof(Branches));
+                }
+
+                for (int j = i + 1; j < Branches.Count; j++)
+                {
+                    if (string.Equals(Branches[i].EventName, Branches[j].EventName, StringComparison.Ordinal))
+                    {
+                        throw new ArgumentException(
+                            $"'{Branches[i].EventName}' appears on more than one branch of the same wait — the event name is the delivery key, so duplicate branches cannot be told apart",
+                            nameof(Branches));
+                    }
+                }
+            }
+
+            // Copied into a plain array, not a collection-expression target of the IReadOnlyList property:
+            // that would synthesise the compiler's internal read-only-array type, which the host serializer
+            // records as the payload's $type and then cannot reconstruct on the way back in. Copying also
+            // keeps the caller from mutating the list behind the guards above.
+            EventBranch[] copy = [.. Branches];
+            this.Branches = copy;
+            this.Timeout = Timeout;
+            this.OnTimeout = OnTimeout;
+        }
+
+        /// <summary>The branches this wait can be resumed by, in declared (tie-break) order. Never empty.</summary>
+        public IReadOnlyList<EventBranch> Branches { get; }
+
+        /// <summary>How long the events race a durable timer, or null to park indefinitely.</summary>
+        public TimeSpan? Timeout { get; }
+
+        /// <summary>The typed step DTO to resume into when the durable timer wins the race.</summary>
+        public object? OnTimeout { get; }
+    }
 
     /// <summary>Park on a durable timer for <paramref name="Duration"/>.</summary>
     public sealed record Delay(TimeSpan Duration) : WorkflowAction;
@@ -34,6 +99,14 @@ public abstract record WorkflowAction
     /// <summary>Continue-as-new, carrying the typed <paramref name="CarryState"/> DTO across the boundary.</summary>
     public sealed record Loop(object CarryState) : WorkflowAction;
 }
+
+/// <summary>
+/// One resumable branch of a <see cref="WorkflowAction.WaitForEvent"/>: the event name that resumes it,
+/// plus the typed step DTO a bare (payload-free) raise of that name resumes into. <paramref name="OnEvent"/>
+/// is sealed and journaled at wait time, so a context-free caller needs nothing but the instance id and the
+/// event name; a raise carrying a payload supplies the next step itself and wins over it.
+/// </summary>
+public sealed record EventBranch(string EventName, object? OnEvent = null);
 
 /// <summary>The kinds of <see cref="WorkflowAction"/>, one per variant.</summary>
 public enum WorkflowActionKind

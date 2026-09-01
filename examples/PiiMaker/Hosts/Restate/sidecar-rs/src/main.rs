@@ -18,6 +18,7 @@
 //! host driving portable and native flows at once can run their two .NET callback hosts on separate ports.
 //! The shared secret STEP_TOKEN is presented on every callback.
 
+use restate_sdk::context::macro_support::SealedDurableFuture;
 use restate_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -99,6 +100,38 @@ struct TerminateRequest {
 
 /// Flattened `WorkflowAction` returned by `/step`. byte[] fields arrive as base64 strings; unknown JSON
 /// fields are dropped by serde.
+/// The wire-contract version this sidecar speaks, sent on every portable callback so the .NET host can
+/// refuse a stale binary running an old contract. Must match `RestateWorkflowHost.WireVersion`; bump both
+/// in lock-step on any breaking change to the /step or /terminate shapes.
+const WIRE_VERSION: &str = "2";
+const WIRE_VERSION_HEADER: &str = "x-soex-wire-version";
+
+/// One branch of a `wait`: the event name that resumes it, plus that branch's pre-sealed on-event step
+/// (base64 envelope), empty when the branch declared none.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WaitBranch {
+    event_name: String,
+    #[serde(default)]
+    on_event: String,
+}
+
+/// The branches a `wait` can be resumed by. A wait journaled before branches existed carries only the
+/// legacy `eventName`/`onEvent` pair, so it reads back as the one-branch wait it is.
+fn wait_branches(dto: &ActionDto) -> Vec<WaitBranch> {
+    let declared = dto.branches.as_deref().unwrap_or(&[]);
+    if declared.is_empty() {
+        vec![WaitBranch { event_name: dto.event_name.clone(), on_event: dto.on_event.clone() }]
+    } else {
+        declared.to_vec()
+    }
+}
+
+/// Renders a wait's branch names for a diagnostic: `'a'`, or `'a', 'b'` for a multi-branch wait.
+fn quoted_names(branches: &[WaitBranch]) -> String {
+    branches.iter().map(|b| format!("'{}'", b.event_name)).collect::<Vec<_>>().join(", ")
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ActionDto {
@@ -112,9 +145,16 @@ struct ActionDto {
     #[serde(default)]
     on_timeout: String,
     /// The step to resume into when a `wait` signal arrives with an empty payload (base64
-    /// envelope) — the flow's pre-sealed continuation; a non-empty raised payload wins.
+    /// envelope) — the flow's pre-sealed continuation; a non-empty raised payload wins. Carries
+    /// branch 0 of `branches`, so a single-branch wait journaled here still replays after a rollback.
     #[serde(default)]
     on_event: String,
+    /// The branches a `wait` can be resumed by, in declared (tie-break) order. `Option` rather than a
+    /// bare `Vec` so BOTH an absent field (a host deployed before branches) and an explicit JSON `null`
+    /// decode: `serde(default)` alone covers only the absent case, and a null would fail the whole
+    /// invocation with a decode error rather than degrade to no branches.
+    #[serde(default)]
+    branches: Option<Vec<WaitBranch>>,
 }
 
 #[restate_sdk::workflow]
@@ -152,6 +192,7 @@ impl MembershipPortable for MembershipPortableImpl {
                     let resp = client
                         .post(format!("{url}/step"))
                         .bearer_auth(&token)
+                        .header(WIRE_VERSION_HEADER, WIRE_VERSION)
                         .json(&req)
                         .send()
                         .await?
@@ -168,7 +209,7 @@ impl MembershipPortable for MembershipPortableImpl {
                     let term = TerminateRequest { instance_id: instance_id.clone(), sequence };
                     let (client, url, token) = (self.client.clone(), self.step_url.clone(), self.token.clone());
                     ctx.run(|| async move {
-                        client.post(format!("{url}/terminate")).bearer_auth(&token).json(&term).send().await?.error_for_status()?;
+                        client.post(format!("{url}/terminate")).bearer_auth(&token).header(WIRE_VERSION_HEADER, WIRE_VERSION).json(&term).send().await?.error_for_status()?;
                         Ok(())
                     })
                     .name(format!("terminate-{sequence}"))
@@ -180,22 +221,47 @@ impl MembershipPortable for MembershipPortableImpl {
                     ctx.sleep(Duration::from_nanos((dto.timeout_ticks.max(0) as u64) * 100)).await?;
                 }
                 "wait" => {
-                    let event: &'static str = intern_event_name(dto.event_name.clone());
-                    let event_name = dto.event_name.clone();
-                    if dto.timeout_ticks < 0 {
-                        let resolved = ctx.promise::<String>(event).await?;
-                        // an empty raise resumes into the pre-sealed on-event step; a payload wins. With neither
-                        // there is nothing to resume into — fail descriptively rather than continue empty.
-                        current = resume_or_fail(resolved, dto.on_event, &event_name, "was raised with an empty payload and the wait has no on-event step")?;
-                    } else {
-                        let dur = Duration::from_nanos((dto.timeout_ticks.max(0) as u64) * 100);
-                        current = restate_sdk::select! {
-                            resolved = ctx.promise::<String>(event) =>
-                                resume_or_fail(resolved?, dto.on_event, &event_name, "was raised with an empty payload and the wait has no on-event step")?,
-                            _ = ctx.sleep(dur) =>
-                                resume_or_fail(dto.on_timeout, String::new(), &event_name, "timer elapsed with no on-timeout step")?,
-                        };
+                    // Every branch parks on its own durable promise; they race each other AND the timer.
+                    // `select!` is fixed-arity and the branch count is only known at run time, so the race
+                    // is built the way the SDK's own DurableFuturesUnordered::next builds it: one handle
+                    // per future, runtime picks the first to complete. Handle order is branch order with
+                    // the timer last, so the winning index maps back to a branch.
+                    let branches = wait_branches(&dto);
+                    let mut promises = Vec::with_capacity(branches.len());
+                    for branch in &branches {
+                        let event: &'static str = intern_event_name(branch.event_name.clone());
+                        promises.push(ctx.promise::<String>(event));
                     }
+
+                    let timer = if dto.timeout_ticks < 0 {
+                        None
+                    } else {
+                        Some(ctx.sleep(Duration::from_nanos((dto.timeout_ticks.max(0) as u64) * 100)))
+                    };
+
+                    let mut handles: Vec<_> = promises.iter().map(|p| p.handle()).collect();
+                    if let Some(timer) = &timer {
+                        handles.push(timer.handle());
+                    }
+                    let winner = promises[0].inner_context().select(handles).await?;
+
+                    current = if winner < promises.len() {
+                        let branch = branches[winner].clone();
+                        let resolved = promises.swap_remove(winner).await?;
+                        // an empty raise resumes into THAT branch's pre-sealed on-event step; a payload wins
+                        resume_or_fail(resolved, branch.on_event.clone(), &branch.event_name,
+                            "was raised with an empty payload and its branch of the wait has no on-event step")?
+                    } else {
+                        // Await the winner even when it is the timer: select() reports WHICH future
+                        // completed, and the SDK's own combinators then await it to consume the completion.
+                        timer.expect("a timer index can only win when a timer was armed").await?;
+                        if dto.on_timeout.is_empty() {
+                            return Err(TerminalError::new(format!(
+                                "durable timer elapsed waiting for {} with no on-timeout step", quoted_names(&branches))).into());
+                        }
+
+                        dto.on_timeout.clone()
+                    };
                 }
                 "loop" => {
                     // continue-as-new: chain a fresh execution carrying state; id is instance_id~<absolute
@@ -212,7 +278,7 @@ impl MembershipPortable for MembershipPortableImpl {
                     let term = TerminateRequest { instance_id: instance_id.clone(), sequence };
                     let (client, url, token) = (self.client.clone(), self.step_url.clone(), self.token.clone());
                     ctx.run(|| async move {
-                        client.post(format!("{url}/terminate")).bearer_auth(&token).json(&term).send().await?.error_for_status()?;
+                        client.post(format!("{url}/terminate")).bearer_auth(&token).header(WIRE_VERSION_HEADER, WIRE_VERSION).json(&term).send().await?.error_for_status()?;
                         Ok(())
                     })
                     .name(format!("terminate-fail-{sequence}"))

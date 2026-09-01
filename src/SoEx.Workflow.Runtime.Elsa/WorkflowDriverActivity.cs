@@ -136,19 +136,24 @@ public sealed class WorkflowDriverActivity : Activity
                     continue;
 
                 case WorkflowAction.WaitForEvent wait:
-                    // The bookmark name is journaled in clear, so it must not carry the subject. The
-                    // wait's OnEvent continuation is sealed now and journaled on the bookmark, so a
-                    // event raised with no payload resumes into it (mirror of the timer's onTimeout).
-                    string eventName = step.GuardVisibleName(wait.EventName, ambient);
+                    // One bookmark per branch, each carrying its OWN sealed OnEvent continuation. The bookmark
+                    // names are journaled in clear, so every branch name is guarded (WaitBranches.Flatten does
+                    // both). The resume path needs no branch selection: ElsaEventPayload.Resolve reads the
+                    // continuation from the bookmark the gateway actually targets, and OnResume's
+                    // ClearBookmarks() burns the losing branches — so exactly one branch can ever resume a wait.
                     Suspend(context);
-                    context.CreateBookmark(new CreateBookmarkArgs
+                    foreach (WaitBranchWire branch in WaitBranches.Flatten(step, sagaInstanceId, wait, ambient))
                     {
-                        BookmarkName = eventName,
-                        Stimulus = eventName,
-                        Callback = OnResume,
-                        AutoBurn = true,
-                        Metadata = new Dictionary<string, string> { ["onEvent"] = Convert.ToBase64String(wait.OnEvent is { } oe ? step.SealStep(sagaInstanceId, oe, ambient) : []) },
-                    });
+                        context.CreateBookmark(new CreateBookmarkArgs
+                        {
+                            BookmarkName = branch.EventName,
+                            Stimulus = branch.EventName,
+                            Callback = OnResume,
+                            AutoBurn = true,
+                            Metadata = new Dictionary<string, string> { ["onEvent"] = Convert.ToBase64String(branch.OnEvent) },
+                        });
+                    }
+
                     if (wait.Timeout is { } timeout)
                     {
                         context.CreateBookmark(new CreateBookmarkArgs
@@ -160,6 +165,7 @@ public sealed class WorkflowDriverActivity : Activity
                             Metadata = TimerMetadata(timeout, wait.OnTimeout is { } ot ? step.SealStep(sagaInstanceId, ot, ambient) : []),
                         });
                     }
+
                     return;
 
                 case WorkflowAction.Delay delay:

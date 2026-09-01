@@ -21,7 +21,18 @@ internal static class DurableTaskStepOptions
 }
 
 /// <summary>A flattened, replay-safe view of a <see cref="WorkflowAction"/> for the orchestration.</summary>
-public sealed record WorkflowActionDto(string Kind, byte[] Payload, string EventName, long TimeoutTicks, byte[] OnTimeout, byte[] OnEvent);
+public sealed record WorkflowActionDto(
+    string Kind, byte[] Payload, string EventName, long TimeoutTicks, byte[] OnTimeout, byte[] OnEvent,
+    WaitBranchWire[]? Branches = null)
+{
+    /// <summary>
+    /// The wait's branches, in declared order. Normalised to empty rather than null because this DTO is
+    /// journaled and, for Restate, crosses a language boundary: the contract on that wire is that an absent
+    /// value is the empty collection, never JSON <c>null</c>. A serialized null decodes as a type error in
+    /// the Rust sidecar, which fails the invocation on EVERY action, not just a wait.
+    /// </summary>
+    public WaitBranchWire[] Branches { get; init; } = Branches ?? [];
+}
 
 /// <summary>
 /// Portable flow — runs one entrypoint step as a Durable Task activity (off the replay path)
@@ -56,17 +67,32 @@ public sealed class StepActivity(IGovernedStep step)
         {
             WorkflowAction.Complete c => new("complete", step.GuardResultPiiFree(step.Serializer.Serialize(c.Result), ambient), "", 0, [], []),
             WorkflowAction.RaiseIntoNext r => new("next", step.SealStep(input.InstanceId, r.NextStep, ambient), "", 0, [], []),
-            WorkflowAction.WaitForEvent w => new(
-                "wait",
-                [],
-                step.GuardVisibleName(w.EventName, ambient),
-                w.Timeout?.Ticks ?? -1,
-                w.OnTimeout is { } ot ? step.SealStep(input.InstanceId, ot, ambient) : [],
-                w.OnEvent is { } oe ? step.SealStep(input.InstanceId, oe, ambient) : []),
+            WorkflowAction.WaitForEvent w => WaitFlattening.Wait(step, input.InstanceId, w, ambient),
             WorkflowAction.Delay d => new("delay", [], "", d.Duration.Ticks, [], []),
             WorkflowAction.Loop l => new("loop", step.SealStep(input.InstanceId, l.CarryState, ambient), "", 0, [], []),
             _ => throw new InvalidOperationException($"unhandled action {action.Kind()}"),
         };
+    }
+}
+
+/// <summary>
+/// Flattens a wait for the orchestration. Branch 0 is repeated in the legacy EventName/OnEvent fields so a
+/// single-branch wait journaled here replays unchanged if this deploy is rolled back; WaitBranches.Of reads
+/// the other direction, for an instance already parked at a wait when this code was deployed over it.
+/// </summary>
+internal static class WaitFlattening
+{
+    public static WorkflowActionDto Wait(IGovernedStep step, string instanceId, WorkflowAction.WaitForEvent w, byte[]? ambient)
+    {
+        WaitBranchWire[] branches = WaitBranches.Flatten(step, instanceId, w, ambient);
+        return new(
+            "wait",
+            [],
+            branches[0].EventName,
+            w.Timeout?.Ticks ?? -1,
+            w.OnTimeout is { } ot ? step.SealStep(instanceId, ot, ambient) : [],
+            branches[0].OnEvent,
+            branches);
     }
 }
 

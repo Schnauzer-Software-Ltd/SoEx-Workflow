@@ -48,11 +48,23 @@ multi-process or restart-surviving deployment must back the .NET callback host w
 store: the bundled `OpenBaoInstanceKeyStore` or `RavenDbInstanceKeyStore`, or your own
 `IInstanceKeyStore` (DB/KMS/HSM).
 
-The flattened `ActionDto` a `wait` returns carries two pre-sealed continuations as base64 fields:
-`onTimeout` (the step to resume into when the timer wins) and `onEvent` (the step to resume into when
-`raise_event` delivers an empty payload, so an external caller can raise "this happened" with no flow
-knowledge). A non-empty raised payload always wins and becomes the next step. Both fields use the empty
-string, never JSON `null`, when absent. After changing either side of this wire contract, bump
+The flattened `ActionDto` a `wait` returns carries the wait's pre-sealed continuations as base64
+fields: `onTimeout` (the step to resume into when the timer wins) and, per branch, `onEvent` (the step
+to resume into when `raise_event` delivers an empty payload at that branch's name, so an external
+caller can raise "this happened" with no flow knowledge). A non-empty raised payload always wins and
+becomes the next step. These fields use the empty string, never JSON `null`, when absent.
+
+A wait carries a `branches` array, each entry an `{eventName, onEvent}` pair, in the order the flow
+declared them. The sidecar parks a durable promise per branch and races them against the wait's timer,
+resuming into the continuation of whichever branch resolves first; if several are already resolved, the
+first declared wins. The top-level `eventName`/`onEvent` fields repeat branch 0, so a single-branch wait
+journaled by this build still replays if you roll the deploy back, and a wait journaled before branches
+existed reads back as the one-branch wait it is.
+
+Restate diverges from the other engines here in one way worth planning around. A durable promise is
+write-once per event name for the life of a generation, so a branch that is raised more than once (a
+resend button, say) delivers only its first raise. A flow that needs a repeatable branch has to take a
+`Loop` after handling it, which chains a fresh generation with fresh promises. After changing either side of this wire contract, bump
 `RestateWorkflowHost.WireVersion` (and the sidecar's `WIRE_VERSION`) and rebuild the sidecar explicitly
 (`cargo build --release`).
 

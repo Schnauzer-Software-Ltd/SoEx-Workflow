@@ -45,6 +45,13 @@ public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[
         // continue-as-new (a fresh generation), matching the portable Temporal driver's per-generation dedup.
         var handledRaiseIds = new HashSet<string>();
 
+        // External-event receivers registered but not yet consumed, keyed by event name. A multi-branch wait
+        // races N receivers and only one can win; a dropped loser still consumes the next delivery for its
+        // name, so its payload would vanish and the next wait on that name would park forever. Stashing the
+        // losers and reusing them keeps that delivery. It is per-GENERATION (a local, rebuilt identically on
+        // every replay, reset by continue-as-new) — matching handledRaiseIds and preserveUnprocessedEvents:false.
+        var pendingWaits = new Dictionary<string, Task<RaisedEvent>>();
+
         try
         {
             while (true)
@@ -64,7 +71,7 @@ public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[
                         break;
 
                     case "wait":
-                        current = await AwaitEventAsync(context, action, handledRaiseIds);
+                        current = await AwaitEventAsync(context, action, handledRaiseIds, pendingWaits);
                         break;
 
                     case "delay":
@@ -94,66 +101,96 @@ public sealed class WorkflowOrchestration : TaskOrchestrator<PortableSeed, byte[
     }
 
     private static async Task<byte[]> AwaitEventAsync(
-        TaskOrchestrationContext context, WorkflowActionDto wait, HashSet<string> handledRaiseIds)
+        TaskOrchestrationContext context, WorkflowActionDto wait, HashSet<string> handledRaiseIds,
+        Dictionary<string, Task<RaisedEvent>> pendingWaits)
     {
-        if (wait.TimeoutTicks < 0)
-        {
-            while (true)
-            {
-                RaisedEvent ev = await context.WaitForExternalEvent<RaisedEvent>(wait.EventName);
-                if (IsDuplicate(ev, handledRaiseIds))
-                {
-                    continue;   // accidental redelivery of an already-handled id — keep waiting for the next raise
-                }
+        WaitBranchWire[] branches = WaitBranches.Of(wait.Branches, wait.EventName, wait.OnEvent);
 
-                return Raised(wait, ev.Payload);
+        Task<RaisedEvent> Pending(string name)
+        {
+            if (!pendingWaits.TryGetValue(name, out Task<RaisedEvent>? pending))
+            {
+                pendingWaits[name] = pending = context.WaitForExternalEvent<RaisedEvent>(name);
             }
+
+            return pending;
         }
 
-        // Recompute the remaining timeout against the deterministic clock so a deduped duplicate doesn't reset
-        // the deadline: each loop waits only what's left of the original window.
-        DateTime deadline = context.CurrentUtcDateTime + TimeSpan.FromTicks(wait.TimeoutTicks);
+        // Compute the deadline once against the deterministic clock so a deduped duplicate doesn't reset it:
+        // each pass through the loop waits only what is left of the original window.
+        DateTime? deadline = wait.TimeoutTicks < 0
+            ? null
+            : context.CurrentUtcDateTime + TimeSpan.FromTicks(wait.TimeoutTicks);
+
         while (true)
         {
-            TimeSpan remaining = deadline - context.CurrentUtcDateTime;
-            if (remaining <= TimeSpan.Zero)
+            if (deadline is { } due && due <= context.CurrentUtcDateTime)
             {
-                return wait.OnTimeout is { Length: > 0 } ? wait.OnTimeout
-                    : throw new InvalidOperationException(
-                        $"durable timer elapsed waiting for '{wait.EventName}' with no OnTimeout step");
+                return TimedOut(branches, wait);
             }
 
-            try
+            Task<RaisedEvent>[] waits = [.. branches.Select(b => Pending(b.EventName))];
+            List<Task> racing = [.. waits];
+
+            // The timer is cancelled as soon as the race resolves, so a wait that an event won does not leave a
+            // durable timer pending in the instance's history until its (possibly very distant) deadline.
+            using var timerCancellation = new CancellationTokenSource();
+            if (deadline is { } fireAt)
             {
-                RaisedEvent ev = await context.WaitForExternalEvent<RaisedEvent>(wait.EventName, remaining);
-                if (IsDuplicate(ev, handledRaiseIds))
+                racing.Add(context.CreateTimer(fireAt, timerCancellation.Token));
+            }
+
+            await Task.WhenAny(racing);
+            timerCancellation.Cancel();
+
+            // Re-scan in DECLARED order rather than taking whichever task WhenAny surfaced: when more than one
+            // of the wait's events is already deliverable, the first branch declared wins. Deterministic — the
+            // scan is over a list rebuilt identically on every replay.
+            int winner = -1;
+            for (int i = 0; i < waits.Length; i++)
+            {
+                if (waits[i].IsCompleted)
                 {
-                    continue;
+                    winner = i;
+                    break;
                 }
+            }
 
-                return Raised(wait, ev.Payload);
-            }
-            catch (TaskCanceledException)
+            if (winner < 0)
             {
-                // the durable timer won the race
-                return wait.OnTimeout is { Length: > 0 } ? wait.OnTimeout
-                    : throw new InvalidOperationException(
-                        $"durable timer elapsed waiting for '{wait.EventName}' with no OnTimeout step");
+                return TimedOut(branches, wait);   // the durable timer won the race
             }
+
+            RaisedEvent ev = await waits[winner];
+            // Consumed: drop it from the stash so a re-loop (or a later wait on this name) registers afresh.
+            // The OTHER branches keep their stashed receivers, so a duplicate does not re-register them.
+            pendingWaits.Remove(branches[winner].EventName);
+
+            if (IsDuplicate(ev, handledRaiseIds))
+            {
+                continue;   // accidental redelivery of an already-handled id — keep waiting for the next raise
+            }
+
+            return Raised(branches[winner], ev.Payload);
         }
     }
+
+    private static byte[] TimedOut(WaitBranchWire[] branches, WorkflowActionDto wait) =>
+        wait.OnTimeout is { Length: > 0 } ? wait.OnTimeout
+        : throw new InvalidOperationException(
+            $"durable timer elapsed waiting for {WaitBranches.Quoted(branches)} with no OnTimeout step");
 
     // A re-raise carrying an already-handled id is a duplicate; a null id (or a new one) is a distinct raise.
     private static bool IsDuplicate(RaisedEvent ev, HashSet<string> handledRaiseIds) =>
         ev.RaiseId is not null && !handledRaiseIds.Add(ev.RaiseId);
 
-    // An event raised with a payload carries the next step; one raised empty resumes into the wait's sealed
-    // OnEvent continuation (journaled by the step activity at wait time). With neither a payload nor an OnEvent
-    // step there is nothing to resume into — throw descriptively rather than continuing with empty bytes that
-    // would only fail later at decrypt (matching the InProc driver instead of diverging from it).
-    private static byte[] Raised(WorkflowActionDto wait, byte[]? payload) =>
+    // An event raised with a payload carries the next step; one raised empty resumes into the continuation its
+    // OWN branch declared (sealed and journaled by the step activity at wait time). With neither a payload nor
+    // an OnEvent step there is nothing to resume into — throw descriptively rather than continuing with empty
+    // bytes that would only fail later at decrypt (matching the InProc driver instead of diverging from it).
+    private static byte[] Raised(WaitBranchWire branch, byte[]? payload) =>
         payload is { Length: > 0 } ? payload
-        : wait.OnEvent is { Length: > 0 } ? wait.OnEvent
+        : branch.OnEvent is { Length: > 0 } ? branch.OnEvent
         : throw new InvalidOperationException(
-            $"'{wait.EventName}' was raised with an empty payload and the wait has no OnEvent step");
+            $"'{branch.EventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
 }

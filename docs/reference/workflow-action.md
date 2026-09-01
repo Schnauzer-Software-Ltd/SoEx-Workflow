@@ -7,22 +7,54 @@ The value a portable-model step operation returns; the driver routes it onto the
 primitives. The framework envelopes the typed step/result payloads, so you pass DTOs rather than raw
 bytes. Namespace: `SoEx.Workflow`.
 
-When a `WaitForEvent` resumes, the event payload becomes the next step; an event with no payload
-resumes into the wait's `OnEvent` step.
+When a `WaitForEvent` resumes, the event payload becomes the next step. An event raised with no payload
+resumes into the `OnEvent` step of the branch it was raised at.
 
 | Action | Meaning |
 |---|---|
 | `Complete(object? Result)` | The instance is finished; `Result` is your typed result. Journaled in clear, so keep it PII-free. |
 | `RaiseIntoNext(object NextStep)` | Route the typed `NextStep` DTO into the next step (thread saga state forward). |
-| `WaitForEvent(string EventName, TimeSpan? Timeout = null, object? OnTimeout = null, object? OnEvent = null)` | Park until the named event. With `Timeout`, the event races a durable timer; if the timer wins, resume into the `OnTimeout` step. A payload-carrying event becomes the next step; an empty event resumes into the `OnEvent` step. Both continuations are sealed at wait time and journaled. |
+| `WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)` | Park until one of the branches' events is raised. With `Timeout`, they race a durable timer; if the timer wins, resume into the `OnTimeout` step. A payload-carrying event becomes the next step; an empty event resumes into that branch's `OnEvent` step. Every continuation is sealed at wait time and journaled. |
+| `EventBranch(string EventName, object? OnEvent = null)` | One way a wait can be resumed: the event name, and the step a bare raise of that name means. |
 | `Delay(TimeSpan Duration)` | Park on a durable timer. |
 | `Loop(object CarryState)` | Continue-as-new, carrying the typed `CarryState` across the boundary. |
 
+## Waiting on more than one event
+
+A parked instance often has more than one thing that can happen to it. An onboarding flow waiting for
+an email verification may also offer a resend button; an approval may also be cancelled or escalated.
+Give the wait one branch per event, and each branch says what a bare raise of its own name means:
+
+```csharp
+return new WorkflowAction.WaitForEvent(
+    [
+        new EventBranch("verified", new OnboardStep.Provision(orgId, userId)),
+        new EventBranch("resend",   new OnboardStep.SendCode(orgId, userId, attempt + 1)),
+    ],
+    TimeSpan.FromHours(72),
+    OnTimeout: new OnboardStep.Abandon("code expired"));
+```
+
+All branches race each other and the timer. The alternative is to overload one event name for two
+meanings and tell them apart by whether a payload came with it, which stops working as soon as both
+senders can raise the event bare.
+
+Branch order decides the winner when more than one of the events is already deliverable at the moment
+the wait arms. The first branch declared wins, on every runtime, so the choice is a property of your
+flow rather than of the engine's delivery order.
+
+Two branches of one wait cannot share an event name. The name is the delivery key on every runtime, so
+duplicates could not be told apart at resume; the constructor rejects them.
+
 ## Notes
 
-- `OnEvent` is the symmetric twin of `OnTimeout`: it lets a bare event (no payload, no key material)
+- `OnEvent` is the branch-level twin of `OnTimeout`: it lets a bare event (no payload, no key material)
   resume a wait into a pre-decided step. See
   [Trigger flows from outside](../how-to/trigger-flows-from-outside.md#raise-an-event-with-no-payload).
 - `Loop` carries the logical instance id and per-instance key across the continue-as-new boundary, and
   the carried state is sealed like any other journaled payload.
-- A `WaitForEvent` with no `OnEvent` rejects a bare raise, because the flow declared no meaning for it.
+- A branch with no `OnEvent` rejects a bare raise at that name, because the flow declared no meaning
+  for it. The branch still accepts a payload-carrying raise.
+- `WaitForEvent` has a single constructor by design. The action travels through your host's message
+  serializer as a polymorphic response, and a second public constructor leaves the serializer no
+  unambiguous way to rebuild the value, so a one-name convenience overload cannot exist.

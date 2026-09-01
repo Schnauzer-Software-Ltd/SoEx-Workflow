@@ -183,8 +183,9 @@ journaled id and a party who knows the identity but not the secret can't derive 
 it through the engine-agnostic `IWorkflowGateway` the host wired.
 
 To continue, `TriggerBase.AccountVerified` / `InviteAccepted` / `PaymentUpdated` re-derive the same id
-from the same business identity and raise a bare event with no payload. Each portable wait pre-sealed its
-own `OnEvent` continuation into the journal, so the flow decides what the event means; an event raised
+from the same business identity and raise a bare event with no payload. Each branch of a portable wait
+pre-sealed its own `OnEvent` continuation into the journal, so the flow decides what the event means, and
+a wait that names several events resumes into the continuation of the branch raised; an event raised
 with a payload still carries the next step, so data-carrying events keep working. (Offboarding is a
 self-completing fan-out, so it has no continuation events.) `Trigger` returns the derived instance id in
 every case.

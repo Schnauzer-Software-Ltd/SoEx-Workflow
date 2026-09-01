@@ -34,9 +34,9 @@ public sealed partial class MembershipManager : Interface.Portable.IMembershipMa
                 return await ReserveThenInvite(c);
             case OnboardCommand.SendInvite c:
                 return new WorkflowAction.WaitForEvent(
-                    "invite-accepted", policy.InviteTtl,
-                    OnTimeout: new OnboardCommand.ReleaseReservation(c.ReservationId),
-                    OnEvent: new OnboardCommand.AssignSubscription(c.ReservationId, c.Email));
+                    [new EventBranch("invite-accepted", new OnboardCommand.AssignSubscription(c.ReservationId, c.Email))],
+                    policy.InviteTtl,
+                    OnTimeout: new OnboardCommand.ReleaseReservation(c.ReservationId));
             case OnboardCommand.AssignSubscription c:
                 return await AssignAndComplete(c);
             case OnboardCommand.ReleaseReservation c:
@@ -54,9 +54,9 @@ public sealed partial class MembershipManager : Interface.Portable.IMembershipMa
     {
         await Proxy.ForComponent<IIdentityAccess>(this).CreateAccountAsync(c.Email);
         return new WorkflowAction.WaitForEvent(
-            "account-verified", policy.AccountTtl,
-            OnTimeout: new OnboardCommand.Abandon("account not verified"),
-            OnEvent: new OnboardCommand.ReserveSubscription(c.OrgId, c.Email, c.Offer));
+            [new EventBranch("account-verified", new OnboardCommand.ReserveSubscription(c.OrgId, c.Email, c.Offer))],
+            policy.AccountTtl,
+            OnTimeout: new OnboardCommand.Abandon("account not verified"));
     }
 
     private async Task<WorkflowAction> ReserveThenInvite(OnboardCommand.ReserveSubscription c)
@@ -115,11 +115,12 @@ public sealed partial class MembershipManager : Interface.Portable.IMembershipMa
             return new RenewCommand.Cancel(subscriberId, "dunning exhausted").Raise();
         }
 
-        // "payment-updated" retries the charge immediately (OnEvent); the backoff timer retries anyway.
+        // "payment-updated" retries the charge immediately (the branch's continuation); the backoff timer
+        // retries anyway. Both resume into the same next step, so the event only makes the retry sooner.
         return new WorkflowAction.WaitForEvent(
-            "payment-updated", policy.DunningBackoff,
-            OnTimeout: new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1),
-            OnEvent: new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1));
+            [new EventBranch("payment-updated", new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1))],
+            policy.DunningBackoff,
+            OnTimeout: new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1));
     }
 
     private async Task<WorkflowAction> CancelAndComplete(RenewCommand.Cancel c)

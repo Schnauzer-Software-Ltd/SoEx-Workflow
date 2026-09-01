@@ -58,15 +58,43 @@ A portable wait can pre-decide what a bare event means by giving `WaitForEvent` 
 continuation, sealed at wait time and journaled just like `OnTimeout`:
 
 ```csharp
-return new WorkflowAction.WaitForEvent("account-verified", ttl,
-    OnTimeout: new OnboardStep.Release(reservationId),       // the timer fired
-    OnEvent:   new OnboardStep.Invite(email, reservationId)); // the bare event arrived
+return new WorkflowAction.WaitForEvent(
+    [new EventBranch("account-verified", new OnboardStep.Invite(email, reservationId))],  // the bare event arrived
+    ttl,
+    OnTimeout: new OnboardStep.Release(reservationId));                                    // the timer fired
 ```
 
 Now `gateway.RaiseEventAsync(instanceId, "account-verified")` resumes the wait into the journaled
 `OnEvent` step, with no payload, no flow knowledge, and no key material on the caller's side. An event
 raised with a sealed payload still wins and becomes the next step. A bare raise into a wait with no
 `OnEvent` fails, because the flow declared no meaning for it.
+
+## Let more than one event resume a wait
+
+Give the wait a branch per event when a parked instance can be resumed by more than one thing. Each
+branch names its event and the step a bare raise of that name means, and all of them race the timer:
+
+```csharp
+return new WorkflowAction.WaitForEvent(
+    [
+        new EventBranch("verified", new OnboardStep.Provision(orgId, userId)),
+        new EventBranch("resend",   new OnboardStep.SendCode(orgId, userId, attempt + 1)),
+    ],
+    TimeSpan.FromHours(72),
+    OnTimeout: new OnboardStep.Abandon("code expired"));
+```
+
+Callers raise as before; the branch is chosen by the name they raise. Two callers that mean different
+things no longer have to share one event name, so a genuine verification arriving alongside a resend
+resumes the flow instead of being lost to whichever raise got there first.
+
+If both events are already deliverable when the wait arms, the first branch declared wins, on every
+runtime. Order the branches by what should take priority.
+
+One caveat on Restate: its durable promises are write-once per event name per generation, so a branch
+that can be raised repeatedly (a resend button is the usual case) only fires once unless the flow
+takes a `Loop` after handling it. See the
+[multi-branch row of the runtime matrix](../reference/runtime-matrix.md#gateway-semantics).
 
 To make a specific raise idempotent, pass a stable `raiseId`; see the
 [idempotent-raise row of the matrix](../reference/runtime-matrix.md#gateway-semantics) for per-engine

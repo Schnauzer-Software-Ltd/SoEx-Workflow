@@ -103,42 +103,70 @@ public sealed class WorkflowDriver<I>(
         }
     }
 
-    private async Task<byte[]> AwaitEventAsync(WorkflowAction.WaitForEvent wait, byte[]? ambient)
-    {
-        string eventName = step.GuardVisibleName(wait.EventName, ambient);
+    // Event waits already registered against the runtime but not yet consumed, keyed by event name.
+    //
+    // A multi-branch wait races N waits against the timer and only one can win, so the losers are left
+    // registered. Dropping them would drop their payloads: a raise that lands on an abandoned wait resolves
+    // it into nothing, and the NEXT wait on that name — having neither a live waiter nor a buffered value —
+    // parks forever. That is exactly the swallowed-event failure multi-branch waits exist to remove, so the
+    // losing waits are stashed here and reused by the next wait that names them. It also closes the same hole
+    // in a single-branch wait whose timer won (the event task was abandoned the same way).
+    private readonly Dictionary<string, Task<byte[]>> _pendingWaits = [];
 
-        if (wait.Timeout is not { } timeout)
+    private Task<byte[]> PendingWait(string eventName)
+    {
+        if (!_pendingWaits.TryGetValue(eventName, out Task<byte[]>? pending))
         {
-            return Raised(wait, eventName, await runtime.WaitForEventAsync(eventName), ambient);
+            _pendingWaits[eventName] = pending = runtime.WaitForEventAsync(eventName);
         }
 
-        Task<byte[]> eventTask = runtime.WaitForEventAsync(eventName);
-        Task timer = runtime.DelayAsync(timeout);
-        Task finished = await Task.WhenAny(eventTask, timer);
+        return pending;
+    }
 
-        if (finished == eventTask)
+    private async Task<byte[]> AwaitEventAsync(WorkflowAction.WaitForEvent wait, byte[]? ambient)
+    {
+        // EVERY branch name is journaled in clear, so every one is guarded — not just the first.
+        string[] names = [.. wait.Branches.Select(b => step.GuardVisibleName(b.EventName, ambient))];
+        Task<byte[]>[] waits = [.. names.Select(PendingWait)];
+
+        List<Task> racing = [.. waits];
+        if (wait.Timeout is { } timeout)
         {
-            return Raised(wait, eventName, await eventTask, ambient);
+            racing.Add(runtime.DelayAsync(timeout));
+        }
+
+        await Task.WhenAny(racing);
+
+        // Re-scan in DECLARED order instead of taking whichever task WhenAny surfaced: when more than one of
+        // the wait's events is already deliverable, the first branch declared wins. That makes the choice a
+        // property of the flow rather than of the runtime's delivery order.
+        for (int i = 0; i < waits.Length; i++)
+        {
+            if (waits[i].IsCompleted)
+            {
+                _pendingWaits.Remove(names[i]);
+                return Raised(wait.Branches[i], names[i], await waits[i], ambient);
+            }
         }
 
         return wait.OnTimeout is { } onTimeout
             ? step.SealStep(runtime.InstanceId, onTimeout, ambient)
             : throw new InvalidOperationException(
-                $"durable timer elapsed waiting for '{eventName}' with no OnTimeout step");
+                $"durable timer elapsed waiting for {string.Join(", ", names.Select(n => $"'{n}'"))} with no OnTimeout step");
     }
 
-    // An event raised with a payload carries the next step; one raised empty resumes into the
-    // wait's OnEvent continuation (the flow decided at wait time what the bare event means).
-    private byte[] Raised(WorkflowAction.WaitForEvent wait, string eventName, byte[] payload, byte[]? ambient)
+    // An event raised with a payload carries the next step; one raised empty resumes into the continuation
+    // its OWN branch declared (the flow decided at wait time what that bare event means).
+    private byte[] Raised(EventBranch branch, string eventName, byte[] payload, byte[]? ambient)
     {
         if (payload is { Length: > 0 })
         {
             return payload;
         }
 
-        return wait.OnEvent is { } onEvent
+        return branch.OnEvent is { } onEvent
             ? step.SealStep(runtime.InstanceId, onEvent, ambient)
             : throw new InvalidOperationException(
-                $"'{eventName}' was raised with an empty payload and the wait has no OnEvent step");
+                $"'{eventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
     }
 }

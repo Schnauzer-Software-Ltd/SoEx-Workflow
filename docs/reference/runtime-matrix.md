@@ -76,6 +76,7 @@ diverges and one engine cannot detect the duplicate at all, so design your calle
 |---|---|---|---|---|---|---|
 | **Duplicate start** (same id twice) | `WorkflowInstanceAlreadyExistsException` while running; a completed id frees and can be re-onboarded | `WorkflowInstanceAlreadyExistsException` while live; a completed id frees | `WorkflowInstanceAlreadyExistsException` (from `WorkflowAlreadyStarted`) | `WorkflowInstanceAlreadyExistsException` (a run already holds the correlation) | `WorkflowInstanceAlreadyExistsException` (a key runs once ever, so a completed key stays taken) | plain `StartAsync`: **not detectable** — the broker mints its own key, so start-idempotency is the caller's duty; `StartByMessageAsync` dedupes by message id within a TTL |
 | **Raise before the wait is armed** | buffered | buffered | buffered (durable signal) | rejected (no bookmark yet) | resolved into the promise when the wait arms | broker-correlated (message TTL) |
+| **Multi-branch wait** (several named events racing the timer) | all branches parked at once; declared-order tie-break | one external-event receiver per branch | one signal name per branch, checked in declared order | one bookmark per branch; the rest are burned on resume | one durable promise per branch, raced together; write-once per name per generation | portable flow not available (native BPMN only) |
 | **Idempotent raise** (`raiseId`) | dedupes (per-instance handled-id set, instance-lifetime) | dedupes (portable flow; per-generation — the set resets across continue-as-new) | dedupes (portable flow; per-generation — resets across continue-as-new) | dedupes when an `IIdempotencyStore` is wired, else `NotSupportedException` | deduped by construction (write-once promise; `raiseId` advisory) | dedupes via broker message id within TTL |
 
 Practical consequences:
@@ -100,6 +101,14 @@ Practical consequences:
   has no duplicate-start protection, so start from a `DeterministicInstanceId` and gate re-entry at the seam.
   Elsa has the same hazard on a plain start by correlation id — two live instances of one logical id share one
   key, and the first to terminate shreds the other's live data — so gate the single-active start there too.
+- A multi-branch wait behaves the same on every runtime that has the portable flow, with one exception.
+  On Restate a durable promise is write-once per event NAME for the life of a generation, so a branch
+  that can be raised more than once (a resend button, say) delivers only its first raise unless the flow
+  takes a `Loop` after handling it, which starts a fresh generation with fresh promises. The other
+  engines consume the delivery and re-arm, so a repeated raise at one branch just works.
+- On Elsa, a raise that arrives for a branch after another branch has already resumed the wait is
+  rejected rather than buffered, because the bookmarks are burned on resume. That is the same
+  raise-before-the-wait-is-armed behavior as the row above, and it is loud rather than silent.
 - The Zeebe raise TTL (how long the broker buffers a message before it is silently dropped if it never
   correlates) defaults to 5 minutes and is now settable on the gateway (`raiseTtl`); size it to your worst-case
   arm-the-wait latency for a slow-arming flow.

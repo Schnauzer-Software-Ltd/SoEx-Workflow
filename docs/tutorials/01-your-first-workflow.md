@@ -74,7 +74,7 @@ public sealed class OnboardManager : IOnboardManager, IErasureEvent
     public Task<WorkflowAction> Run(OnboardStep step) => Task.FromResult<WorkflowAction>(step switch
     {
         OnboardStep.Lookup l => new WorkflowAction.RaiseIntoNext(new OnboardStep.Invite(l.Email, "res-1")),
-        OnboardStep.Invite  => new WorkflowAction.WaitForEvent("invite-accepted"),
+        OnboardStep.Invite  => new WorkflowAction.WaitForEvent([new EventBranch("invite-accepted")]),
         OnboardStep.Assign  => new WorkflowAction.Complete("assigned"),
         _ => throw new ArgumentOutOfRangeException(nameof(step)),
     });
@@ -159,7 +159,7 @@ Console.WriteLine("Workflow started; waiting for invite-accepted…");
 
 ## Step 5 — Raise the event and finish
 
-The flow is now parked on `WaitForEvent("invite-accepted")`. Raise that event (the payload you raise
+The flow is now parked on its `invite-accepted` branch. Raise that event (the payload you raise
 becomes the next step) and await completion:
 
 ```csharp

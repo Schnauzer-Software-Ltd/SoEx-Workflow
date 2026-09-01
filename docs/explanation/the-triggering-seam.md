@@ -60,11 +60,16 @@ engine you target, or keep strictly to the happy path.
 ## Bare events
 
 A bare "this happened" raise carries no payload, so how does the flow know what to do? A portable wait
-can pre-decide: `WaitForEvent` takes an `OnEvent` continuation (the symmetric twin of `OnTimeout`),
-sealed at wait time and journaled. The bare raise then resumes the wait into that pre-sealed step. This
-is what lets a webhook raise an event at a flow with no flow knowledge and no key material at all. An
-event raised with a sealed payload still wins and becomes the next step, so data-carrying events keep
-working.
+can pre-decide: each branch of a `WaitForEvent` carries an `OnEvent` continuation (the branch-level twin
+of `OnTimeout`), sealed at wait time and journaled. The bare raise then resumes the wait into the step
+that branch pre-sealed. This is what lets a webhook raise an event at a flow with no flow knowledge and
+no key material at all. An event raised with a sealed payload still wins and becomes the next step, so
+data-carrying events keep working.
+
+A wait can name several events, each with its own continuation, all racing the timer. That matters for
+the seam because callers are usually different systems: an identity provider confirming a verification
+and an operator pressing resend both raise at the same parked instance, and giving them one event name
+each is what stops one from consuming the other's raise.
 
 ## Two lines of defense
 
