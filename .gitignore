@@ -13,6 +13,11 @@ __pycache__/
 # Rust (the Restate engine shell — primary); Cargo.lock IS committed (binary crate)
 target/
 
+# Packaging output. The pack script writes here on the packaging branch, but the directory survives a
+# branch switch, so it has to be ignored here too — otherwise it sits untracked on main and a broad
+# `git add` would commit the built packages into a public repository.
+artifacts/
+
 .idea/
 
 .DS_Store
