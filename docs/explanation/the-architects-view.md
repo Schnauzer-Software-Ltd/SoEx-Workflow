@@ -46,8 +46,9 @@ contract), and they map onto the Method's split between business-triggered and o
   must-retain carve-out), and `InstancesForAsync` (the same index read in reverse, scoped to one flow
   key). Most of the time a Manager needs no reverse lookup, because `DeterministicInstanceId` re-derives
   an instance id from business identity with no store involved. `InstancesForAsync` covers the case
-  derivation cannot reach: the subject index is additive, so a running instance can pick up subjects it
-  was not started under, and there is no id to derive from one of those. It is scoped to a flow key
+  derivation cannot reach: a step that learns about someone declares them on the action it returns, so a
+  running instance picks up subjects it was not started under, and there is no id to derive from one of
+  those. It is scoped to a flow key
   because the index spans every flow and every Manager sharing the utility, and one Manager should not
   be handed another's instance ids.
 - `External.IWorkflowUtility` is what the host or ingress calls as a system client: `RequestEraseAsync`

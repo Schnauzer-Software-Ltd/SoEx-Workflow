@@ -55,6 +55,11 @@ public sealed class StepActivity(IGovernedStep step)
             step.GuardVisibleName(input.InstanceId, ambient);
             action = (await step.DispatchGovernedAsync(input.Payload, input.InstanceId, input.Sequence)) as WorkflowAction
                 ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
+
+            // Fold in whatever this step enrolled before the flattening below guards or seals anything. Inside
+            // the try, so a rejected enrollment is scrubbed by the same catch rather than faulting the
+            // orchestration with an unscrubbed message.
+            ambient = step.EnrollSubjects(input.InstanceId, ambient, action);
         }
         catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, input.InstanceId, ambient, ex))
         {

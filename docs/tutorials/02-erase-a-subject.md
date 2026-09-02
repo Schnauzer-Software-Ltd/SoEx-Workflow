@@ -47,6 +47,11 @@ A running instance has already minted its per-instance key and registered its su
 We'll set that state up directly so the example is self-contained, and seal a payload so we can prove,
 at the end, that it becomes unreadable.
 
+This tutorial uses one subject, the person the flow was started for. An instance can hold more than one:
+a step that learns about someone declares them, and everything below then covers them too. That's
+[`WorkflowAction.Subjects`](../reference/workflow-action.md#enrolling-a-subject-the-step-learned), and
+you don't need it yet.
+
 Keep the governed-core wiring from Tutorial 1 (it gives you `keys`, `index`, `step`, and `component`).
 Then add:
 

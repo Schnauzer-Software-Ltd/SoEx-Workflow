@@ -110,6 +110,10 @@ public sealed class WorkflowDriverActivity : Activity
             try
             {
                 action = await DispatchWithRetryAsync(bound, current, seq);
+
+                // Fold in whatever this step enrolled before the switch below guards or seals anything. Inside
+                // the try, so a rejected enrollment is scrubbed rather than persisted by Elsa in clear.
+                ambient = step.EnrollSubjects(sagaInstanceId, ambient, action);
             }
             catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, sagaInstanceId, ambient, ex))
             {

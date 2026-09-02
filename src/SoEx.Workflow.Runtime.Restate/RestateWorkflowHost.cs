@@ -133,6 +133,12 @@ public static class RestateWorkflowHost
                 step.GuardVisibleName(req.InstanceId, ambient);
                 action = (await step.DispatchGovernedAsync(req.Payload, req.InstanceId, req.Sequence)) as WorkflowAction
                     ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
+
+                // Fold in whatever this step enrolled before Flatten guards or seals anything below. Inside the
+                // try, so a rejected enrollment is scrubbed rather than crossing to the sidecar unscrubbed. The
+                // subjects stay on this side: they ride the sealed continuation, never the ActionDto the
+                // sidecar journals.
+                ambient = step.EnrollSubjects(req.InstanceId, ambient, action);
             }
             catch (Exception ex) when (!GovernedStepFailure.IsJournalSafe(step, req.InstanceId, ambient, ex))
             {

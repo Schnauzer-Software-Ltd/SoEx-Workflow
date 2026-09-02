@@ -103,7 +103,7 @@ channel, endpoint, and `WorkflowListeners`.
 ## Governance, keys, and subjects
 
 **Subject** — A PII identity (e.g. an email) touched by a workflow, carried in `SubjectContext`.
-Subjects are additive — a later step may name more.
+Subjects are additive: a step that learns someone new declares them on the action it returns (`.Enrolling(...)`), and the framework indexes them and carries them onto the sealed continuation.
 
 **`SubjectContext`** — The PII subject marker attached to ambient bytes. `Managed` means the framework
 indexes and routes erasure for the subject; `External` defers subject handling to the consumer's own

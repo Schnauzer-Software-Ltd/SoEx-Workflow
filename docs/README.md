@@ -58,7 +58,8 @@ Exact signatures, packages, and per-runtime behavior.
 - [Erasure events](reference/erasure-events.md) — `IErasureEvent` and its context types.
 - [Erasure API](reference/erasure-api.md) — `ErasureCoordinator`, the sweep, and maintenance.
 - [Governance services](reference/governance-services.md) — key store, subject index, idempotency store.
-- [Triggering](reference/triggering.md) — `IWorkflowGateway`, `WorkflowSealer`, `DeterministicInstanceId`.
+- [Triggering](reference/triggering.md) — `IWorkflowGateway`, `WorkflowSealer`, `DeterministicInstanceId`,
+  and the `IWorkflowUtility` face a Manager proxies to.
 - [Runtime matrix](reference/runtime-matrix.md) — how the model maps to each runtime, and where their
   semantics diverge.
 - [Transport security](reference/transport-security.md) — the in-flight companion to crypto-shred: what

@@ -45,7 +45,10 @@ from that subject to the instance. When a request arrives, `ErasureCoordinator` 
 instance the subject ever touched, including instances the requester has no idea exist.
 
 The index is additive and multi-subject (one instance may touch several people, and one person may be in
-many instances), and it's pruned at termination so it doesn't grow without bound. Like the key store, it
+many instances), and it's pruned at termination so it doesn't grow without bound. A flow adds to it by
+declaring on the action a step returns whom that step just learned about; the framework indexes them
+there and then, so a request arriving while the instance is parked still reaches it, and carries them
+onto the sealed continuation so the name guards cover them from that point on. Like the key store, it
 must be durable and shared in production, or erasure routing can't see instances that ran on another
 process.
 

@@ -83,6 +83,15 @@ drives the force-terminations to crypto-shred and reports at whatever fidelity i
 The request's `ReceivedAt` anchors a statutory clock, so the coordinator can flag a request at risk of
 breaching its legal deadline.
 
+A flow does not only touch the person it was started for. A step that looks up an account may learn its
+billing contact; a claim may name a dependant. That step declares them on the action it returns
+(see [`WorkflowAction`](../reference/workflow-action.md#enrolling-a-subject-the-step-learned)), and the
+framework indexes them at that moment rather than when the flow next moves. The timing is the point: an
+instance can sit parked on a wait for days, and until the edge exists the only record of that person is
+inside a sealed continuation, which is precisely where an erasure request cannot look. Reading the
+mapping back the other way — which instances a subject is in — is `InstancesForAsync` on the utility's
+subsystem face.
+
 ## What is sealed vs guarded
 
 Crypto-shred only protects what was sealed under the key. Two things are deliberately not sealed,
@@ -97,6 +106,13 @@ because the runtime needs to read them in clear, and those get a different treat
 Because these escape the shred, the framework guards them instead: it rejects any instance id or step or
 final result that carries a subject id, on both the portable flow and the shared native dispatch path.
 (Timers carry no guarded id.)
+
+The guard runs forward, not backward. It checks each name against the subjects known at the moment that
+name is written, so a subject a step enrolls part-way through is guarded from that step on, and names
+journaled earlier in the same instance are not re-examined. In practice a name written before the flow
+had heard of that person cannot contain them, but the ordering is worth knowing: it is why the framework
+folds an enrollment into the step's context *before* it flattens and guards that step's action, and not
+after.
 
 By default that guard is a substring scan for the subject ids SoEx already governs. Its scope is
 deliberately narrow: it stops you accidentally leaking a subject you already told the framework about,

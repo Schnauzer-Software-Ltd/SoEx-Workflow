@@ -9,6 +9,36 @@ public abstract record WorkflowAction
 {
     private WorkflowAction() { }
 
+    private readonly IReadOnlyList<string> _subjects = [];
+
+    /// <summary>
+    /// Subjects this step learned while it ran, to enroll on the instance — the people the flow discovered
+    /// rather than the one it was started for. The step is what knows them (a lookup returned a partner, a
+    /// claim named a dependant), so the declaration rides its return value.
+    /// <para>
+    /// The framework folds them into the step's subject context before it flattens this action: it indexes
+    /// them at once, so an erasure request reaches the instance even while it sits parked at a wait, and it
+    /// carries them onto the sealed continuation, so from here on they are guarded out of every name the
+    /// runtime journals in clear. They never appear in the flattened action itself, which is journaled — only
+    /// in the sealed step, which the crypto-shred can reach.
+    /// </para>
+    /// <para>
+    /// Declare them on an action that continues the flow. A <see cref="Delay"/> seals no next step for them to
+    /// travel on and rejects a non-empty set rather than half-applying it. The guard is prospective: names
+    /// already journaled for this instance were checked against the subjects known at the time, and enrolling
+    /// one now does not re-examine them.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> Subjects
+    {
+        get => _subjects;
+
+        // Normalized to empty rather than null on the way in: an action round-trips through the host message
+        // serializer as a polymorphic response, and a JSON null here would otherwise reach the drivers as a
+        // null reference on every action, not only one that declared a subject.
+        init => _subjects = value ?? [];
+    }
+
     /// <summary>The workflow is finished; <paramref name="Result"/> is the typed result the consumer returns.</summary>
     public sealed record Complete(object? Result) : WorkflowAction;
 
@@ -141,4 +171,12 @@ public static class WorkflowActionExtensions
     /// <c>new WorkflowAction.RaiseIntoNext(nextStep)</c>, read as <c>nextStep.Raise()</c>.
     /// </summary>
     public static WorkflowAction Raise(this object nextStep) => new WorkflowAction.RaiseIntoNext(nextStep);
+
+    /// <summary>
+    /// Declares subjects the step just learned on the action it returns, read as
+    /// <c>nextStep.Raise().Enrolling(partnerEmail)</c>. Sugar for <c>action with { Subjects = [...] }</c>;
+    /// see <see cref="WorkflowAction.Subjects"/> for what the framework does with them.
+    /// </summary>
+    public static WorkflowAction Enrolling(this WorkflowAction action, params string[] subjects) =>
+        action with { Subjects = subjects };
 }

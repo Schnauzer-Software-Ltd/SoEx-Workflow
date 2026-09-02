@@ -43,6 +43,26 @@ public interface IGovernedStep
     IReadOnlyList<string> SubjectIds(byte[]? ambientContext);
 
     /// <summary>
+    /// Folds the subjects an action declared (<see cref="WorkflowAction.Subjects"/>) into the step's subject
+    /// context and returns the ambient bytes the rest of the step must use — the extended set for an action
+    /// that enrolled someone, the bytes unchanged for one that did not.
+    /// <para>
+    /// Two things happen, and both are needed. The new subjects are indexed immediately, because a flow can
+    /// park at a wait for days and until the edge exists an erasure request for that person does not reach
+    /// this instance. They are also carried on the returned ambient, which every continuation is sealed with,
+    /// so the name guards cover them from here on.
+    /// </para>
+    /// <para>
+    /// Call it after the step returns and <b>before</b> guarding or flattening: a step that enrolls a subject
+    /// and in the same action names an event after them must be caught, which only works if the guard sees the
+    /// extended set. An externally-managed flow keeps deferring indexing, exactly as it does for the subject it
+    /// started with. A <see cref="WorkflowAction.Delay"/> that declares subjects is rejected — it seals no next
+    /// step for them to travel on.
+    /// </para>
+    /// </summary>
+    byte[]? EnrollSubjects(string instanceId, byte[]? ambientContext, WorkflowAction action);
+
+    /// <summary>
     /// Returns <paramref name="name"/> if PII-free, else throws. A runtime-visible name (event/timer/
     /// instance id) is journaled in clear, so it must not carry a subject id (it would survive the shred).
     /// </summary>
@@ -168,6 +188,84 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         var ambient = new AmbientContext(Serializer);
         ambient.Deserialize(bytes);
         return ambient.Contains<SubjectContext>() ? ambient.Get<SubjectContext>().SubjectIds ?? [] : [];
+    }
+
+    /// <summary>Folds an action's declared subjects into the step's context. See the interface member.</summary>
+    public byte[]? EnrollSubjects(string instanceId, byte[]? ambientContext, WorkflowAction action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        IReadOnlyList<string> declared = action.Subjects;
+        if (declared is not { Count: > 0 })
+        {
+            return ambientContext;
+        }
+
+        if (action is WorkflowAction.Delay)
+        {
+            // A delay reuses the current step rather than sealing a new one, so an extended context would be
+            // dropped the moment the driver re-reads the ambient off that same step. Refuse rather than index
+            // the subject and silently lose the half that guards the journal. (No subject in the message —
+            // this throw can reach a journal.)
+            throw new InvalidOperationException(
+                "a Delay cannot enroll subjects: it seals no next step for them to travel on — declare them on " +
+                "the action that continues the flow");
+        }
+
+        // The bag is rebuilt from the incoming bytes rather than from scratch so any other ambient stop the
+        // host flowed onto the step survives; only the subject stop is replaced.
+        var bag = new AmbientContext(Serializer);
+        if (ambientContext is { Length: > 0 })
+        {
+            bag.Deserialize(ambientContext);
+        }
+
+        // The declaring step's own context decides the flag: an externally-managed flow that learns a subject
+        // still defers indexing to the consumer's system, as it does for the subject it started with. With no
+        // subject stop at all there is nothing to defer to, so what the step declares is workflow-managed.
+        bool managed = true;
+        List<string> merged = [];
+        if (bag.Contains<SubjectContext>())
+        {
+            SubjectContext existing = bag.Get<SubjectContext>();
+            managed = existing.WorkflowManaged;
+            merged.AddRange(existing.SubjectIds ?? []);
+        }
+
+        List<string> added = [];
+        foreach (string subject in declared)
+        {
+            if (string.IsNullOrEmpty(subject))
+            {
+                throw new ArgumentException("a step cannot enroll an empty subject id", nameof(action));
+            }
+
+            if (!merged.Contains(subject, StringComparer.Ordinal))
+            {
+                merged.Add(subject);
+                added.Add(subject);
+            }
+        }
+
+        if (added.Count == 0)
+        {
+            // Every declared subject is already carried — re-declaring one across a loop is the ordinary case,
+            // so it is a no-op rather than a reseal. Idempotent for the same reason AddEdge is.
+            return ambientContext;
+        }
+
+        // Index NOW, not when the next step runs: the same managed-only rule InstanceGovernor applies per step,
+        // applied at the moment the flow learned the subject. Until this edge exists the only record of that
+        // person is inside a sealed continuation, where an erasure request cannot look.
+        if (managed)
+        {
+            foreach (string subject in added)
+            {
+                _index.AddEdge(subject, instanceId);
+            }
+        }
+
+        bag.SetOrReplace(new SubjectContext(merged, managed));
+        return bag.Serialize();
     }
 
     /// <summary>Guards a runtime-visible name (journaled in clear) against carrying a known subject id.</summary>

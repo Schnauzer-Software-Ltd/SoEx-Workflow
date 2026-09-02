@@ -70,7 +70,14 @@ SubjectContext.Managed("invitee@example.com");    // SoEx indexes + erases this 
 SubjectContext.External("invitee@example.com");   // subject handling stays with your own system
 ```
 
-Subjects are additive; a later step may name more.
+Subjects are additive. The context above names who the flow starts with; a step that later *learns*
+someone new declares them on the action it returns, and SoEx indexes them and carries them forward:
+
+```csharp
+return new WorkflowAction.RaiseIntoNext(nextStep).Enrolling(billingContact);
+```
+
+See [`WorkflowAction`](../reference/workflow-action.md#enrolling-a-subject-the-step-learned).
 
 ## 4. Implement the erasure events
 

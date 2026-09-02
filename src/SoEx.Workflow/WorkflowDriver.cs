@@ -34,6 +34,10 @@ public sealed class WorkflowDriver<I>(
                 IdempotencyKey key = step.KeyFor(current, runtime.InstanceId, sequence);
                 byte[]? ambient = step.AmbientOf(runtime.InstanceId, current);
 
+                // Fold in whatever this step enrolled before anything is guarded or sealed below, so a step
+                // that names an event after a subject it enrolled in the same action is still caught.
+                ambient = step.EnrollSubjects(runtime.InstanceId, ambient, action);
+
                 switch (action)
                 {
                     case WorkflowAction.Complete complete:

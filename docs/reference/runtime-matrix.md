@@ -31,6 +31,12 @@ a flow off Zeebe therefore loses the deploy-time warning, not the `GovernedStep`
 
 ## How the model maps (native flow)
 
+A native flow has no `WorkflowAction`, so the portable flow's `.Enrolling(...)` seam does not apply: the
+flow author owns the `StepContext` and therefore owns the ambient. On the **portable** flow, enrolling a
+subject a step learned behaves identically on all five runtimes — each driver folds the declared subjects
+in before it flattens the action, so the subject rides the sealed continuation and never reaches the
+journal. It is covered by the cross-runtime conformance suite rather than listed per engine here.
+
 | Concept | DTFx | Temporal | Elsa | Restate | Camunda 8 / Zeebe |
 |---|---|---|---|---|---|
 | **Flow (consumer-authored)** | `GovernedTaskOrchestrator.Flow` (CallActivity + WaitForExternalEvent) | `[Workflow]` (ExecuteActivity + WaitConditionAsync) | registered Elsa workflow (activities + bookmarks) | Restate sidecar (`ctx.run` + durable promise) | BPMN diagram (service tasks + message-catch events), broker-owned |
@@ -39,6 +45,7 @@ a flow off Zeebe therefore loses the deploy-time warning, not the `GovernedStep`
 | **Termination hook** | base orchestrator → `GovernedTerminationActivity` | `GovernedTerminationInterceptor` → termination activity | `GovernedTerminationActivity` | `POST /gov-terminate` → `GovernedTermination` | process end execution-listener job → `GovernedTermination` |
 | **Durability model** | event-sourced replay | event-sourced replay | checkpoint/resume (bookmarks) | journalled (out-of-process sidecar) | broker-journalled (process variables) |
 | **Native PII-guard tooling** | none — consumer duty + `GovernedStep` guards | none — same | none — same | none — same | deploy-time BPMN io-mapping lint (`ValidateResource`) |
+| **Subject learned mid-flow** | consumer duty: build a fresh `SubjectContext.Managed(...)` ambient and pass it on the `StepContext` | ← same | ← same | ← same | ← same |
 
 The invariant is in the *Step dispatch* row: the component is invoked the same way on every runtime,
 by the SoEx endpoint pipeline, so your step code is identical and only the flow around it changes.

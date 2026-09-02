@@ -32,6 +32,7 @@ public GovernedStep<I>(
 | `byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null)` | Mint the key (on first use) and seal a step DTO under it. Returns the sealed seed/payload. |
 | `T UnsealStep<T>(string instanceId, byte[] sealed)` | Decrypt a sealed payload back to a typed DTO (key must be live). |
 | `byte[] AmbientOf(string instanceId, byte[] sealed)` | Recover the ambient bytes from a sealed payload (throws `InvalidOperationException` once the key is shredded). |
+| `byte[]? EnrollSubjects(string instanceId, byte[]? ambient, WorkflowAction action)` | Fold the subjects an action declared into the step's context: index them now, and return the ambient every continuation is then sealed with. Portable drivers call this after the step returns and before guarding or flattening. See [`WorkflowAction`](workflow-action.md#enrolling-a-subject-the-step-learned). |
 | `IMessageSerializer Serializer` | The serializer this step was built with. |
 
 `operationName` selects the step operation when the contract has more than one; omit it for a
@@ -39,7 +40,7 @@ single-operation contract. `subjectMatcher` overrides the clear-text guard — s
 [Customize PII detection](../how-to/customize-pii-detection.md).
 
 `GovernedStep<I>` also exposes a non-generic `IGovernedStep` facet (instance id / result / visible-name
-guards, `SealStep`, `AmbientOf`, `Serializer`). This is the type the shipped host builders accept, so a
+guards, `SealStep`, `AmbientOf`, `EnrollSubjects`, `Serializer`). This is the type the shipped host builders accept, so a
 host that drives several entrypoints can hold them uniformly.
 
 **Guard scope.** The default substring matcher catches a known subject id appearing literally in a
