@@ -13,9 +13,9 @@ public abstract record WorkflowAction
     public sealed record Complete(object? Result) : WorkflowAction;
 
     /// <summary>
-    /// Park until one of the wait's named events is raised. With a <paramref name="Timeout"/>, the
+    /// Park until one of the wait's named events is raised. With a <see cref="WaitForEvent.Timeout"/>, the
     /// events race a durable timer; if the timer wins, the workflow resumes into
-    /// <paramref name="OnTimeout"/> (e.g. a compensation step DTO). Each branch carries its own
+    /// <see cref="WaitForEvent.OnTimeout"/> (e.g. a compensation step DTO). Each branch carries its own
     /// <see cref="EventBranch.OnEvent"/> continuation, so the flow decides at wait time what a bare
     /// (payload-free) raise of that branch means: a caller can then raise just the instance id + event
     /// name with no payload (and no flow knowledge) and the driver resumes into that branch's journaled
