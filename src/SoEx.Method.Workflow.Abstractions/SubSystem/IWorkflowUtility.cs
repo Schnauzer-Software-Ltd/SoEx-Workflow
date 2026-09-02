@@ -29,4 +29,22 @@ public interface IWorkflowUtility
     /// <summary>Recovers the subjects the durable index still maps to an instance — backs a manager's
     /// <c>OnRetaining</c> must-retain carve-out while the per-instance key is still live.</summary>
     Task<string[]> SubjectsForAsync(string instanceId);
+
+    /// <summary>
+    /// The instances of <paramref name="flowKey"/> the durable index currently maps <paramref name="subject"/>
+    /// to. The companion to <see cref="SubjectsForAsync"/>, but a different kind of call: an instance id is
+    /// normally re-derived from business identity with <c>DeterministicInstanceId</c>, needing no lookup and no
+    /// shared store, so reach for this only where derivation cannot answer. The index is additive, so an
+    /// instance can gain subjects it was not started under, and no derivation from such a subject yields that
+    /// instance's id — that is the case this call exists for.
+    /// <para>Scoped to one flow on purpose. The index spans every flow and every entry component sharing this
+    /// utility, so an unscoped answer would name instances belonging to a peer manager. The scope is the
+    /// <c>{flowKey}-{32 hex}</c> shape <c>DeterministicInstanceId</c> mints: an instance started under an id
+    /// minted by some other convention does not carry the flow in a readable form and so is never returned.
+    /// The flow must be wired on this host, as it must be to start or raise.</para>
+    /// <para>This does not decay at the crypto-shred the way <see cref="SubjectsForAsync"/> does: it matches
+    /// the subject's one-way lookup token rather than opening a blob sealed under the instance key, so it
+    /// answers right up until the edges are pruned at termination.</para>
+    /// </summary>
+    Task<string[]> InstancesForAsync(string flowKey, string subject);
 }

@@ -39,7 +39,7 @@ can find every instance touching a subject. Pruned at termination.
 | `AddEdge(string subject, string instanceId)` | Index that an instance touches a subject. |
 | `SubjectsFor(string instanceId)` | The subjects an instance is indexed under. |
 | `RemoveInstance(string instanceId)` | Drop every subject→instance edge for an instance: the index prune that the termination runs after the crypto-shred (idempotent). |
-| lookup by subject | Find the instances touching a subject (used by `ErasureCoordinator`). |
+| `InstancesFor(string subject)` | The instances touching a subject. Used by `ErasureCoordinator`, and behind the utility's flow-scoped `InstancesForAsync`. |
 
 | Implementation | Package |
 |---|---|

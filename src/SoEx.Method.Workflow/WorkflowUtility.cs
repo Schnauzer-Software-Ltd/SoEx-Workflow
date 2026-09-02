@@ -73,6 +73,23 @@ public sealed class WorkflowUtility(
     public Task<string[]> SubjectsForAsync(string instanceId) =>
         Task.FromResult<string[]>([.. index.SubjectsFor(instanceId)]);
 
+    public Task<string[]> InstancesForAsync(string flowKey, string subject)
+    {
+        // Scoped, never raw. The index is one global subject→instance map shared by every flow and by every
+        // manager wired to this utility, so handing back its answer unfiltered would tell one caller which
+        // instances of a PEER's flows a subject is in. Requiring the flow to be wired is the same admission
+        // start/raise make (and keeps a caller from probing flows this host does not serve); the prefix filter
+        // then keeps the answer inside the flow asked for.
+        seam.For(flowKey);
+
+        // ErasureRouting owns the {prefix}-{32 hex} shape, so the scope here and the erasure owner-routing read
+        // an id the same way. Exact match, so an id NOT minted by DeterministicInstanceId (its flow is then
+        // unreadable) is left out rather than guessed at — a silent omission is the safe failure here, since
+        // the alternative is returning an instance the caller may not own.
+        return Task.FromResult<string[]>(
+            [.. index.InstancesFor(subject).Where(id => ErasureRouting.PrefixOf(id) == flowKey)]);
+    }
+
     // ---- External face: what the host calls ----------------------------------------------------------
 
     public Task<string> RequestEraseAsync(string subject)
