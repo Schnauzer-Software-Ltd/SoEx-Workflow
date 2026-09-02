@@ -115,10 +115,16 @@ public sealed partial class MembershipManager : Interface.Portable.IMembershipMa
             return new RenewCommand.Cancel(subscriberId, "dunning exhausted").Raise();
         }
 
-        // "payment-updated" retries the charge immediately (the branch's continuation); the backoff timer
-        // retries anyway. Both resume into the same next step, so the event only makes the retry sooner.
+        // Two things can happen to a renewal parked in dunning, and they mean opposite things: the payment
+        // provider reports a fixed card, or the subscriber asks to cancel. Each is its own branch with its own
+        // continuation, and both race the backoff timer. Overloading one event name for both would leave the
+        // flow guessing from the payload, and a cancel arriving alongside an update would be lost.
+        // "payment-updated" only makes the retry sooner — the timer retries anyway.
         return new WorkflowAction.WaitForEvent(
-            [new EventBranch("payment-updated", new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1))],
+            [
+                new EventBranch("payment-updated", new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1)),
+                new EventBranch("cancel-requested", new RenewCommand.Cancel(subscriberId, "cancellation requested")),
+            ],
             policy.DunningBackoff,
             OnTimeout: new RenewCommand.Dun(subscriberId, period, dunningAttempt + 1));
     }

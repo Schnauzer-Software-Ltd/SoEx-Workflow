@@ -23,6 +23,7 @@ public static class SoExKnownTypes
                 typeof(TriggerBase.InviteAccepted),
                 typeof(TriggerBase.StartRenewal),
                 typeof(TriggerBase.PaymentUpdated),
+                typeof(TriggerBase.CancellationRequested),
                 typeof(TriggerBase.StartOffboarding),
             ],
             _ => [],

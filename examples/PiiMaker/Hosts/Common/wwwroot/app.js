@@ -135,6 +135,10 @@ const actions = {
     el.value = (Number(el.value) || 0) + 1;
     log(`attempt bumped to ${el.value} — Start onboarding to run it`, 'ok');
   },
+  async cancellationRequested() {
+    await trigger('CancellationRequested', { subscriberId: v('sub-id') });
+    log('raised cancel-requested', 'ok');
+  },
   async startRenewal() {
     const id = await trigger('StartRenewal', { subscriberId: v('sub-id') });
     track('renew', id); log(`began renewal → ${id}`, 'ok');

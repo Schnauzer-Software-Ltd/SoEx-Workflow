@@ -30,6 +30,11 @@ public abstract record TriggerBase
     /// <summary>The payment provider confirmed the subscriber updated their payment method.</summary>
     public sealed record PaymentUpdated(string SubscriberId) : TriggerBase;
 
+    /// <summary>The subscriber asked to cancel. A renewal parked in dunning can be resumed by this as well as
+    /// by <see cref="PaymentUpdated"/>, and the two mean opposite things, so they are separate events rather
+    /// than one event told apart by its payload.</summary>
+    public sealed record CancellationRequested(string SubscriberId) : TriggerBase;
+
     /// <summary>Start offboarding (flow C) for a leaver. Native-only fan-out — hosts whose runtime cannot fan
     /// out leave this flow unwired.</summary>
     public sealed record StartOffboarding(string SubjectId) : TriggerBase;

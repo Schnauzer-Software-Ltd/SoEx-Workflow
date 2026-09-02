@@ -90,6 +90,12 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
                 await utility.RaiseEventAsync("renew", id, "payment-updated");
                 return Raised(id);
             }
+            case TriggerBase.CancellationRequested t:
+            {
+                string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "renew", t.SubscriberId);
+                await utility.RaiseEventAsync("renew", id, "cancel-requested");
+                return Raised(id);
+            }
             case TriggerBase.StartOffboarding t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "offboard", t.SubjectId);

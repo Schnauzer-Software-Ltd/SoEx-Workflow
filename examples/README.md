@@ -190,6 +190,12 @@ with a payload still carries the next step, so data-carrying events keep working
 self-completing fan-out, so it has no continuation events.) `Trigger` returns the derived instance id in
 every case.
 
+The renewal flow shows a wait with more than one branch. Parked in dunning it listens for `payment-updated`
+and `cancel-requested` at once, each with its own pre-sealed continuation, both racing the backoff timer:
+`PaymentUpdated` retries the charge, `CancellationRequested` ends the run. They mean opposite things, so
+they are separate event names rather than one name told apart by its payload — which is what stops a
+cancellation arriving alongside a payment update from being lost. Both buttons sit on the subscription card.
+
 `IMembershipManager` is what the panel's HTTP API exposes (the trigger controller above); it lives in
 its own `PiiMaker.Manager.Membership.Interface` assembly alongside the governed-step contracts. Each UI
 button fires one trigger case; the only runtime-specific code remains the host's seam wiring below

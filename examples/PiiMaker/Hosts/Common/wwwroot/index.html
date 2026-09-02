@@ -116,7 +116,10 @@
         <div class="flow"><span class="key">Force decline (period 1)</span> first so the charge fails (optional).
           <span class="key">Start renewal</span> → charge the period; on success, invoice and <b>continue-as-new</b>
           into the next period (up to 3) then complete; on a decline, enter dunning and wait.
-          <span class="key">Payment updated</span> → retry the charge and carry on. After the max attempts it cancels.</div>
+          <span class="key">Payment updated</span> → retry the charge and carry on. After the max attempts it cancels.
+          The dunning wait listens for <b>two</b> events at once, each with its own continuation, both racing the
+          backoff timer: <span class="key">Payment updated</span> retries, <span class="key">Cancel subscription</span>
+          ends the run. Two meanings, two event names — neither can swallow the other.</div>
         <div class="row"><label>Subscriber</label><input id="sub-id" value="member@example.com" /></div>
         <div class="btns">
           <button class="ghost" data-act="forceDecline">Force decline (period 1)</button>
@@ -125,6 +128,7 @@
         <div class="btns">
           <button data-act="startRenewal">Start renewal</button>
           <button class="ghost" data-act="paymentUpdated">Payment updated</button>
+          <button class="ghost" data-act="cancellationRequested">Cancel subscription</button>
         </div>
         <div class="desc" style="margin-top:8px">Charge attempts (period 1): <b id="sub-attempts">—</b></div>
         <div class="cap-note">Not wired on this host — its runtime/mode doesn't drive subscription renewal.
