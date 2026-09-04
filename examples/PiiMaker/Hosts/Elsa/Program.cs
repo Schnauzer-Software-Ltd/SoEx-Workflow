@@ -53,7 +53,7 @@ internal class Program
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         void Connect(ServiceProvider sp) => system.Seam.Connect("onboard",
             new ElsaWorkflowGateway(sp, nameof(MembershipOnboardWorkflow), idempotency: system.Idempotency, guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
         Connect(elsa);
 
         WebApplicationBuilder webBuilder = MembershipWebHost.Create(port);

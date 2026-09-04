@@ -10,7 +10,8 @@ namespace SoEx.Workflow;
 /// anything to the backend. Wired at the composition root like <see cref="IGatewayAuthorizer"/>; when absent a
 /// gateway forwards bytes verbatim (the raw/testing path), so wire it on any network-reachable deployment.
 /// </summary>
-public sealed class GatewaySealGuard(IMessageSerializer serializer, ISubjectIndex index, ISubjectMatcher? matcher = null)
+public sealed class GatewaySealGuard(
+    IMessageSerializer serializer, ISubjectIndex index, ISubjectMatcher? matcher = null, Type? contract = null)
 {
     private readonly ISubjectMatcher _matcher = matcher ?? SubstringSubjectMatcher.Default;
 
@@ -43,7 +44,7 @@ public sealed class GatewaySealGuard(IMessageSerializer serializer, ISubjectInde
             return;
         }
 
-        if (WorkflowEnvelope.LooksLikePlaintextEnvelope(serializer, bytes))
+        if (WorkflowEnvelope.LooksLikePlaintextEnvelope(serializer, bytes, contract))
         {
             throw new InvalidOperationException(
                 $"{what} is not a sealed envelope: it deserializes as a plaintext workflow envelope, which would be " +

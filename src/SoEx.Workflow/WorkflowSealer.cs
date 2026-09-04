@@ -11,7 +11,8 @@ namespace SoEx.Workflow;
 /// the consumer operation the sealed step targets (e.g. <c>nameof(IThing.Onboard)</c>).
 /// </summary>
 public sealed class WorkflowSealer(
-    IInstanceKeyStore keys, IMessageSerializer serializer, string operationName, IErasureTombstone? tombstone = null)
+    IInstanceKeyStore keys, IMessageSerializer serializer, string operationName, IErasureTombstone? tombstone = null,
+    Type? contract = null)
 {
     /// <summary>
     /// Wraps a typed step DTO into the opaque durable envelope and seals it under the
@@ -30,6 +31,6 @@ public sealed class WorkflowSealer(
         }
 
         keys.Mint(instanceId);
-        return keys.Encrypt(instanceId, WorkflowEnvelope.ForStep(serializer, operationName, stepDto, ambientContext));
+        return keys.Encrypt(instanceId, WorkflowEnvelope.ForStep(serializer, operationName, stepDto, ambientContext, contract));
     }
 }

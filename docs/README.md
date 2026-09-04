@@ -41,6 +41,8 @@ Task-oriented recipes. Each answers a single "how do I…?" and assumes you've d
   recover a held instance.
 - [Run erasure maintenance](how-to/run-erasure-maintenance.md) — the sweep, held re-drive, and deadline
   review that close the gaps over time.
+- [Choose a message serializer](how-to/choose-a-serializer.md) — run on System.Text.Json or BoundJson,
+  and the types you must declare to do it.
 - [Customize PII detection](how-to/customize-pii-detection.md) — plug in a stricter subject matcher.
 - [Secure a PII deployment](how-to/secure-a-pii-deployment.md) — the pre-production checklist of obligations
   the threat model leaves to you: keys, clear-journaled values, telemetry, transport, gateway auth, ops.

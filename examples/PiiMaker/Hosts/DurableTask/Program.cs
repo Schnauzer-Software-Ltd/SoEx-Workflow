@@ -108,13 +108,13 @@ internal class Program
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         system.Seam.Connect("onboard",
             new DurableTaskWorkflowGateway(client, nameof(NativeOnboardOrchestration), seed => new NativeInput(seed, 120), guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
         system.Seam.Connect("renew",
             new DurableTaskWorkflowGateway(client, guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew), contract: typeof(Portable.IMembershipManager)), system.Serializer);
         system.Seam.Connect("offboard",
             new DurableTaskWorkflowGateway(client, nameof(NativeOffboardOrchestration), seed => seed, guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
 
         WebApplicationBuilder webBuilder = MembershipWebHost.Create(port);
         var capabilities = new MembershipWebHost.Capabilities(

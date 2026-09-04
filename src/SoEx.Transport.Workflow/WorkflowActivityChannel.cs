@@ -16,6 +16,9 @@ public sealed class WorkflowActivityChannel<I>(WorkflowListeners listeners) : IC
 
     public IPipeline? Pipeline => _binding?.Pipeline;
 
+    /// <summary>The contract this channel carries; the serializer binds arguments and results against its declared types.</summary>
+    public Type Contract => typeof(I);
+
     public void Bind(Binding binding) => _binding = binding;
 
     public Task<byte[]> InvokeResult(byte[] invocationRequest) =>

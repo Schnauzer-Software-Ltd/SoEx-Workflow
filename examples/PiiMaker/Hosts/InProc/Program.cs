@@ -46,8 +46,8 @@ internal class Program
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);
         var onboardGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Onboard)), termination, authorizer, sealGuard);
         var renewGateway = new InProcWorkflowGateway<Portable.IMembershipManager>(StepFor(nameof(Portable.IMembershipManager.Renew)), termination, authorizer, sealGuard);
-        system.Seam.Connect("onboard", onboardGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard)), system.Serializer);
-        system.Seam.Connect("renew", renewGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
+        system.Seam.Connect("onboard", onboardGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard), contract: typeof(Portable.IMembershipManager)), system.Serializer);
+        system.Seam.Connect("renew", renewGateway, new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew), contract: typeof(Portable.IMembershipManager)), system.Serializer);
 
         WebApplicationBuilder builder = MembershipWebHost.Create(port);
         var capabilities = new MembershipWebHost.Capabilities(

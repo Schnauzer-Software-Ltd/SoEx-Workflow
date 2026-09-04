@@ -123,11 +123,11 @@ internal class Program
         // consumer-authored fan-out service); portable renewal via the generic MembershipPortable flow.
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         system.Seam.Connect("onboard", new RestateWorkflowGateway(new Uri(ingress), "MembershipOnboard", guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
         system.Seam.Connect("offboard", new RestateOffboardGateway(http, ingress),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
         system.Seam.Connect("renew", new RestateWorkflowGateway(new Uri(ingress), "MembershipPortable", guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew), contract: typeof(Portable.IMembershipManager)), system.Serializer);
 
         WebApplicationBuilder webBuilder = MembershipWebHost.Create(port);
         var capabilities = new MembershipWebHost.Capabilities(

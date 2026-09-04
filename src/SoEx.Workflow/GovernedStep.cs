@@ -126,12 +126,12 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         _endpoint = endpoint;
         Serializer = serializer;
         _idempotency = idempotency;
-        _extractor = new StepMetadataExtractor(serializer);
+        _extractor = new StepMetadataExtractor(serializer, typeof(I));
         _keys = keys;
         _index = index;
         _governor = new InstanceGovernor(keys, index);
         OperationName = ResolveOperation(operationName);
-        _sealer = new WorkflowSealer(keys, serializer, OperationName, tombstone);
+        _sealer = new WorkflowSealer(keys, serializer, OperationName, tombstone, typeof(I));
         _matcher = subjectMatcher ?? SubstringSubjectMatcher.Default;
         _clearJournalResult = clearJournalResult;
         _metrics = metrics;
@@ -171,11 +171,11 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
 
     /// <summary>Unseals a sealed envelope and returns the ambient bytes it carries (to flow onto the next step).</summary>
     public byte[]? AmbientOf(string instanceId, byte[] sealedEnvelope) =>
-        WorkflowEnvelope.AmbientBytes(Serializer, _keys.Decrypt(instanceId, sealedEnvelope));
+        WorkflowEnvelope.AmbientBytes(Serializer, _keys.Decrypt(instanceId, sealedEnvelope), typeof(I));
 
     /// <summary>The typed step DTO a sealed envelope carries — a native host threads carried state through the framework, not raw decryption.</summary>
     public T UnsealStep<T>(string instanceId, byte[] sealedEnvelope) =>
-        WorkflowEnvelope.StepArg<T>(Serializer, _keys.Decrypt(instanceId, sealedEnvelope));
+        WorkflowEnvelope.StepArg<T>(Serializer, _keys.Decrypt(instanceId, sealedEnvelope), typeof(I));
 
     /// <summary>The subject ids the framework knows for a step, read from its (decrypted) ambient bytes.</summary>
     public IReadOnlyList<string> SubjectIds(byte[]? ambientContext)
@@ -403,7 +403,13 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     private async Task<object?> DispatchAsync(byte[] stepEnvelope)
     {
         byte[] responseBytes = await _endpoint.DispatchAsync(stepEnvelope);
-        InvocationResponse response = Serializer.Deserialize<InvocationResponse>(responseBytes)
+
+        // Read the response against the same contract and operation the endpoint wrote it with. A serializer
+        // that binds declared types (the allow-listed ones) writes the return as its declared type, carrying no
+        // type marker; reading that back through an untyped `object` slot yields the serializer's own loose node
+        // instead of the result, which then fails to re-serialize when the result is journaled or scanned. The
+        // stock open serializer is indifferent to the extra arguments, so this is symmetric for every pipeline.
+        InvocationResponse response = Serializer.Deserialize<InvocationResponse>(responseBytes, typeof(I), OperationName)
             ?? throw new InvalidOperationException("the endpoint did not return an InvocationResponse");
         return response.Response;
     }

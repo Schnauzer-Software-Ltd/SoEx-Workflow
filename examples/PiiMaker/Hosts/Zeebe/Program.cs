@@ -61,7 +61,7 @@ internal class Program
         // onboarding flow, so only onboarding is wired here (renewal/offboarding stay unwired on this host).
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         system.Seam.Connect("onboard", new ZeebeWorkflowGateway(client, "membership-onboard", guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Onboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
 
         WebApplicationBuilder builder = MembershipWebHost.Create(port);
         var capabilities = new MembershipWebHost.Capabilities(

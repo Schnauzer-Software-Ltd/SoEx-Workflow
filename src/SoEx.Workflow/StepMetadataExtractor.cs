@@ -9,12 +9,11 @@ namespace SoEx.Workflow;
 /// payload. A pure transform over the bytes (no I/O, no clock) — safe to repeat
 /// on a replay runtime.
 /// </summary>
-public sealed class StepMetadataExtractor(IMessageSerializer serializer)
+public sealed class StepMetadataExtractor(IMessageSerializer serializer, Type? contract = null)
 {
     public StepMetadata Extract(byte[] payload, string instanceId, long sequence)
     {
-        var request = serializer.Deserialize<InvocationRequest>(payload)
-            ?? throw new ArgumentException("payload did not deserialize to an InvocationRequest", nameof(payload));
+        InvocationRequest request = WorkflowEnvelope.Request(serializer, payload, contract);
 
         IReadOnlyList<string> subjectIds = [];
         bool workflowManaged = false;

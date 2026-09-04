@@ -73,11 +73,11 @@ internal class Program
         // gateway that starts the consumer-authored fan-out workflow. This is the only runtime-specific wiring.
         var sealGuard = new GatewaySealGuard(system.Serializer, system.Index);   // reject unsealed bytes / subject-bearing raise ids
         system.Seam.Connect("onboard", new TemporalWorkflowGateway(client, onboardQ, guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Onboard), contract: typeof(Portable.IMembershipManager)), system.Serializer);
         system.Seam.Connect("renew", new TemporalWorkflowGateway(client, renewQ, guard: sealGuard),
-            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Portable.IMembershipManager.Renew), contract: typeof(Portable.IMembershipManager)), system.Serializer);
         system.Seam.Connect("offboard", new NativeOffboardGateway(client, offboardQ),
-            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard)), system.Serializer);
+            new WorkflowSealer(keys, system.Serializer, nameof(Native.IMembershipManager.Offboard), contract: typeof(Native.IMembershipManager)), system.Serializer);
 
         using var cts = new CancellationTokenSource();
         Task workers = Task.WhenAll(
