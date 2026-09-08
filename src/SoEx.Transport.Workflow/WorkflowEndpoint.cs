@@ -22,7 +22,7 @@ public sealed class WorkflowEndpoint<I>(IEndpointPipeline endpointPipeline, Work
     public Task Listen()
     {
         ArgumentNullException.ThrowIfNull(_binding, "the endpoint must be bound before listening");
-        listeners.Register(_binding.Transport.Address, this);
+        listeners.Register(_binding.Transport.Address.Uri, this);
         return Task.CompletedTask;
     }
 

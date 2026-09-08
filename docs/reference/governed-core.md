@@ -91,7 +91,7 @@ The framework-understood facts of a step, extracted from the envelope without in
 | Type | Description |
 |---|---|
 | `WorkflowBinding<I>(string name)` | An ordinary SoEx binding that hosts your step component; put it in your topology. |
-| `WorkflowListeners` | Collects endpoints as the host starts; `ForAddress(binding.Transport.Address)` returns the bound `IWorkflowDispatch`. |
+| `WorkflowListeners` | Collects endpoints as the host starts; `ForAddress(binding.Transport.Address.Uri)` returns the bound `IWorkflowDispatch`. |
 | `WorkflowRegistration.RequireErasureEvent(Type)` | Throws at wiring time if the component doesn't implement `IErasureEvent`. |
 | `WorkflowEnvelope.AmbientFor(IMessageSerializer, SubjectContext?)` | Builds the ambient bytes carrying a subject. Returns `byte[]?`. |
 | `WorkflowKnownTypes.Framework` | The framework types to declare when the pipeline's serializer binds declared types. See [choose a serializer](../how-to/choose-a-serializer.md); ignore it on the stock pipeline. |
@@ -122,7 +122,7 @@ builder.SoEx(topology);
 IHost host = builder.Build();
 host.Start();                                                          // endpoint registers as the host starts
 
-IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address);   // resolve AFTER Start
+IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address.Uri);   // resolve AFTER Start
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
 WorkflowRegistration.RequireErasureEvent(component.GetType());

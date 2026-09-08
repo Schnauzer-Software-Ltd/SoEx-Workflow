@@ -126,7 +126,7 @@ builder.SoEx(topology);
 IHost host = builder.Build();
 host.Start();
 
-IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address);
+IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address.Uri);
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
 WorkflowRegistration.RequireErasureEvent(component.GetType());   // fail fast if you forgot the contracts

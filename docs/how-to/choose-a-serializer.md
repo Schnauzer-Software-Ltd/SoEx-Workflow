@@ -53,8 +53,11 @@ var knownTypes = new KnownTypes([
 builder.SoEx(topology, knownTypes, new SystemTextPipeline());
 ```
 
-A type you fail to declare fails loudly on the first step that needs it, naming the type it wanted. It
-does not degrade quietly.
+A type the writing host has not declared fails on the first step that needs it, and the message names the
+type it wanted. Reading is not symmetric: a host that meets an ambient-context entry whose type it has not
+declared drops that entry and carries on, so a subject stop can go missing without an error. Declare the
+same types on every host that takes part in a flow, including a worker you deploy separately from the
+caller.
 
 ## Name the contract when you seal outside the governed step
 

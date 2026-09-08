@@ -22,6 +22,6 @@ public sealed class WorkflowActivityChannel<I>(WorkflowListeners listeners) : IC
     public void Bind(Binding binding) => _binding = binding;
 
     public Task<byte[]> InvokeResult(byte[] invocationRequest) =>
-        listeners.ForAddress(_binding?.Transport.Address
-            ?? throw new InvalidOperationException("the channel must be bound before use")).DispatchAsync(invocationRequest);
+        listeners.ForAddress((_binding?.Transport.Address
+            ?? throw new InvalidOperationException("the channel must be bound before use")).Uri).DispatchAsync(invocationRequest);
 }

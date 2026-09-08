@@ -17,7 +17,8 @@ public sealed class WorkflowBinding<I> : Topology.Binding where I : class
         // segment (it can contain characters — '+', '`' — that are invalid in a URI authority).
         Transport = new WorkflowTransport
         {
-            Address = new Uri($"soex.workflow://{subSystem}/{Uri.EscapeDataString(typeof(I).FullName ?? typeof(I).Name)}"),
+            Address = new Address.Single(
+                new Uri($"soex.workflow://{subSystem}/{Uri.EscapeDataString(typeof(I).FullName ?? typeof(I).Name)}")),
         };
     }
 }

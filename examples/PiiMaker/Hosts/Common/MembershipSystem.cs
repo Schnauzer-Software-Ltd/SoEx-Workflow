@@ -216,8 +216,8 @@ public static class MembershipSystem
         IHost host = builder.Build();
         host.Start();
 
-        IWorkflowDispatch nativeEndpoint = listeners.ForAddress(new WorkflowBinding<Native.IMembershipManager>(subSystem).Transport.Address);
-        IWorkflowDispatch portableEndpoint = listeners.ForAddress(new WorkflowBinding<Portable.IMembershipManager>(subSystem).Transport.Address);
+        IWorkflowDispatch nativeEndpoint = listeners.ForAddress(new WorkflowBinding<Native.IMembershipManager>(subSystem).Transport.Address.Uri);
+        IWorkflowDispatch portableEndpoint = listeners.ForAddress(new WorkflowBinding<Portable.IMembershipManager>(subSystem).Transport.Address.Uri);
         var serializer = host.Services.GetRequiredService<IMessageSerializer>();
         var erasure = host.Services.GetRequiredService<IErasureEvent>();
         var entry = host.Services.GetRequiredService<IMembershipManager>();
