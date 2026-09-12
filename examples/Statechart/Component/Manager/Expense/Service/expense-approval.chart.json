@@ -2,7 +2,7 @@
   "id": "expense-approval",
   "version": "1.0.0",
   "initial": "submitted",
-  "context": { "approver": null },
+  "context": { "claimId": null },
   "states": {
     "submitted": {
       "on": {

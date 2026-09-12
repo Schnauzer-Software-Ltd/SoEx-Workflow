@@ -4,12 +4,12 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>StatechartDemo</RootNamespace>
     <AssemblyName>StatechartDemo</AssemblyName>
+    <StartupObject>StatechartDemo.Hosts.InProc.Program</StartupObject>
   </PropertyGroup>
 
-  <!-- The chart ships WITH the assembly. An embedded resource is the safest home for it: every worker
-       loads byte-identical bytes and a deploy cannot skew one node's copy against another's. -->
+  <!-- The process ships with the assembly, beside the manager that owns it. -->
   <ItemGroup>
-    <EmbeddedResource Include="approval.chart.json" />
+    <EmbeddedResource Include="Component\Manager\Expense\Service\expense-approval.chart.json" />
   </ItemGroup>
 
   <ItemGroup>

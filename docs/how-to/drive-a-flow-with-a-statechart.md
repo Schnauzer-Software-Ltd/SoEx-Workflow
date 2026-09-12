@@ -23,22 +23,34 @@ a mailbox.
 the wire, on the sealed step DTO, and it is fed back into the chart this node already holds — or into the
 version that wrote it, if the chart has been revised since the instance parked.
 
-## 1. Write the contract and the component
+## 1. Write the manager
 
-The contract is the same shape as any other step component: a step DTO, and the data a raise may carry.
+The contract is the same shape as any other portable manager's: a step DTO, and the data a raise may carry.
+Nothing in it says "statechart", which is the point — a chart-backed manager is an ordinary workflow manager.
 
 ```csharp
-public interface IApprovalFlow
+public interface IExpenseManager
 {
-    Task<WorkflowAction> Run(MachineStep step, MachineEventData? data = null);
+    Task<WorkflowAction> Approve(MachineStep step, MachineEventData? data = null);
 }
 
-public sealed class ApprovalFlow(StatechartStep chart) : IApprovalFlow
+public sealed class ExpenseManager(StatechartStep process) : IExpenseManager, IErasureEvent
 {
-    public Task<WorkflowAction> Run(MachineStep step, MachineEventData? data = null) =>
-        Task.FromResult(chart.Advance(step, data));
+    public Task<WorkflowAction> Approve(MachineStep step, MachineEventData? data = null) =>
+        Task.FromResult(process.Advance(step, data));
+
+    // Mandatory for a workflow-hosted manager: the composition refuses one without the erasure contract
+    // rather than letting the termination degrade to a silent no-op. A manager holding data outside the
+    // sealed journal extracts it in OnRetaining, while the key is still live.
+    public Task OnRetaining(RetainingContext context) => Task.CompletedTask;
+    public Task OnTerminated(TerminatedContext context) => Task.CompletedTask;
+    public Task OnRetentionHeld(RetentionHeldContext context) => Task.CompletedTask;
 }
 ```
+
+The process belongs to the manager, so keep the chart with it rather than with a host, and load it there —
+that is also where the chart's named actions are bound to the component calls behind them. See
+[`examples/Statechart`](../../examples/Statechart/README.md) for the layout.
 
 ## 2. Choose a format, and load the chart
 

@@ -19,8 +19,10 @@ hardcoded script.
 
 ## Other examples
 
-- [**Statechart**](Statechart/README.md) — a chart drawn in a statechart tool, exported as XState v6 JSON and
-  run as a governed workflow. Console, no backend: `dotnet run --project examples/Statechart`.
+- [**Statechart**](Statechart/README.md) — an expense-approval Manager whose process is a statechart, drawn in
+  a tool and exported as XState v6 JSON. Same component layout as PiiMaker, so it is clear that all the
+  business logic is under `Component/` and everything else is framework. Console, no backend:
+  `dotnet run --project examples/Statechart`.
 - **MultiManager** — two business managers on one workflow utility, and right-to-erasure routed to the owning
   manager per instance. Console, no backend: `dotnet run --project examples/MultiManager`.
 
