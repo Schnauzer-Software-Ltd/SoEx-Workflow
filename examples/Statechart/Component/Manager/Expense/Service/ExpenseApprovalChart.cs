@@ -23,10 +23,16 @@ public static class ExpenseApprovalChart
     public static readonly string[] ResumableEvents = ["approve", "reject"];
 
     /// <summary>
-    /// Loads the process and binds its actions to <paramref name="notifications"/>. Called once, at start: a
-    /// machine is an immutable value, so one instance serves every step of every claim.
+    /// Loads the process and binds its actions to the components behind them. Called once, at start: a machine
+    /// is an immutable value, so one instance serves every step of every claim.
+    /// <para>
+    /// The components are reached through a factory rather than captured as instances, because a SoEx component
+    /// is resolved per call. Binding one instance here would quietly give the whole process a component that
+    /// outlives every invocation — which works until something in it holds state, and then stops working in a
+    /// way that is hard to see.
+    /// </para>
     /// </summary>
-    public static StatechartStep Load(INotificationAccess notifications)
+    public static StatechartStep Load(Func<INotificationAccess> notifications)
     {
         ArgumentNullException.ThrowIfNull(notifications);
 
@@ -49,7 +55,7 @@ public static class ExpenseApprovalChart
 
     // An action the chart names. It runs inside the governed step, so it is covered by the step's retry and
     // idempotency — which is why the notifier is idempotent on the claim and the outcome.
-    private static void Notify(INotificationAccess notifications, ActionArgs<JsonElement> args, string outcome)
+    private static void Notify(Func<INotificationAccess> notifications, ActionArgs<JsonElement> args, string outcome)
     {
         string claimId = args.Context.TryGetProperty("claimId", out JsonElement id) && id.ValueKind == JsonValueKind.String
             ? id.GetString()!
@@ -58,7 +64,7 @@ public static class ExpenseApprovalChart
         // Who acted is knowable only to whoever raised the event, so it arrives as the event's payload.
         string? by = args.Event is NamedEvent { Data: { } payload } ? payload.ToString() : null;
 
-        notifications.NotifyAsync(claimId, outcome, by).GetAwaiter().GetResult();
+        notifications().NotifyAsync(claimId, outcome, by).GetAwaiter().GetResult();
     }
 
     // The chart ships WITH the assembly: every worker loads identical bytes and no deploy can skew one node's

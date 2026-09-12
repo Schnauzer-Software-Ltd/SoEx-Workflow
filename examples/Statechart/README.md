@@ -19,7 +19,7 @@ Component/                                  ← ALL the business logic is in her
     Service/expense-approval.chart.json     the process, as drawn — it is the manager's orchestration
     Service/ExpenseApprovalChart.cs         loads the process, binds its named actions to component calls
   Access/Notification/
-    Interface/INotificationAccess.cs        telling the claimant what happened
+    Interface/INotificationAccess.cs        telling the claimant what happened — emits, keeps nothing
     Service/NotificationAccess.cs
 
 Hosts/InProc/Program.cs                     ← framework wiring ONLY: runtime, stores, transport, composition
@@ -38,16 +38,16 @@ identical bytes — a chart that differed between nodes would make the flow itse
 process  expense-approval  (embedded with the manager, loaded once)
 
 ── approved by a manager who is named in the raise
-   claim-37f12b27   key live? True
+   claim-6d3f85b9   key live? True
+   notified claim-6d3f85b9: approved by ana
    outcome  {"outcome":"approved"}
-   notified claim-37f12b27: approved by ana
    key live after completion? False  (false = journal crypto-shredded)
 
 ── nobody approves, the process escalates itself, then approved
-   claim-d735405c   key live? True
+   claim-4da8890e   key live? True
+   notified claim-4da8890e: escalated
+   notified claim-4da8890e: approved by the duty manager
    outcome  {"outcome":"approved"}
-   notified claim-d735405c: escalated
-   notified claim-d735405c: approved by the duty manager
    key live after completion? False  (false = journal crypto-shredded)
 ```
 
@@ -61,6 +61,11 @@ process  expense-approval  (embedded with the manager, loaded once)
   real durable timer and that line is absent.)
 - **The key is destroyed at termination**, so everything the journal still holds for a finished claim is
   unrecoverable. The manager got that by being an ordinary governed manager.
+
+Note that the notifications appear as each step runs, not collected at the end. A SoEx component is resolved
+per call and holds nothing between them, so the chart's actions reach their components through a factory rather
+than capturing an instance at load. Anything a component accumulated in a field would be gone by the next step;
+state that has to survive belongs in the sealed journal or an injected store.
 
 ## What is not here
 

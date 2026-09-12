@@ -34,8 +34,11 @@ public static class Program
     {
         // ---- the business component, and the process it owns ------------------------------------------
         // Loaded once, at start. The chart never crosses the wire; only a claim's snapshot does.
-        INotificationAccess notifications = new NotificationAccess();
-        StatechartStep process = ExpenseApprovalChart.Load(notifications);
+        //
+        // The components its actions call are supplied as a factory, not as instances: a SoEx component is
+        // resolved per call and holds nothing between them. A real host resolves from the component's own
+        // scope here; this one news it up, which amounts to the same thing for a component with no state.
+        StatechartStep process = ExpenseApprovalChart.Load(() => new NotificationAccess());
         Console.WriteLine($"process  {ExpenseApprovalChart.ProcessId}  (embedded with the manager, loaded once)");
 
         // ---- the governed step: SoEx hosts the manager, governance wraps it --------------------------
@@ -45,8 +48,10 @@ public static class Program
 
         IServiceCollection managerServices = new ServiceCollection()
             .AddSingleton(listeners)
+            // The process is a singleton because a machine is an immutable value. The manager that uses it is
+            // still constructed per call, which is the only thing holding state would be wrong about.
             .AddSingleton(process)
-            .AddSingleton(notifications)
+            .AddTransient<INotificationAccess, NotificationAccess>()
             .AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
 
         var topology = new SoEx.Topology.System
@@ -90,7 +95,6 @@ public static class Program
 
         async Task RunClaim(string label, bool approveAfterEscalation)
         {
-            int alreadySent = notifications.Sent.Count;
             string claimId = "claim-" + Guid.NewGuid().ToString("N")[..8];
 
             // The claimant is the subject: it rides the ambient, sealed with every step. The instance id is
@@ -124,12 +128,9 @@ public static class Program
 
             byte[] result = await claim;
 
-            // A chart has no CLR output type, so the process completes with its own output as JSON.
+            // A chart has no CLR output type, so the process completes with its own output as JSON. The
+            // notifications above this line were written by the component as each step ran.
             Console.WriteLine($"   outcome  {serializer.Deserialize<string>(result)}");
-            foreach (string sent in notifications.Sent.Skip(alreadySent))
-            {
-                Console.WriteLine($"   notified {sent}");
-            }
 
             // The termination destroyed the per-claim key, so everything the journal still holds for this claim
             // is unrecoverable. The process got that by being an ordinary governed manager.
