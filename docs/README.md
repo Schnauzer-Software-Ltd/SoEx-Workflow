@@ -29,6 +29,8 @@ Task-oriented recipes. Each answers a single "how do I…?" and assumes you've d
 - [Run the portable flow](how-to/run-the-portable-flow.md) — host one component on InProc, Durable
   Task, Temporal, Elsa, or Restate.
 - [Author a native flow](how-to/author-a-native-flow.md) — author the flow in each runtime's own model.
+- [Drive a flow with a statechart](how-to/drive-a-flow-with-a-statechart.md) — run an XState machine as a
+  step component, on every runtime the portable flow supports.
 - [Evolve a running flow](how-to/evolve-a-running-flow.md) — change a flow that has live instances without
   breaking them mid-flight.
 - [Trigger flows from outside](how-to/trigger-flows-from-outside.md) — start and raise events on a flow

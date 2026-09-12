@@ -43,6 +43,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoEx.Workflow.Abstractions"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoEx.Workflow.Stores.Abstractions", "src\SoEx.Workflow.Stores.Abstractions\SoEx.Workflow.Stores.Abstractions.csproj", "{EAF672EB-8153-471C-AEE9-5BBED807EA91}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SoEx.Workflow.Statecharts", "src\SoEx.Workflow.Statecharts\SoEx.Workflow.Statecharts.csproj", "{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -281,6 +283,18 @@ Global
 		{EAF672EB-8153-471C-AEE9-5BBED807EA91}.Release|x64.Build.0 = Release|Any CPU
 		{EAF672EB-8153-471C-AEE9-5BBED807EA91}.Release|x86.ActiveCfg = Release|Any CPU
 		{EAF672EB-8153-471C-AEE9-5BBED807EA91}.Release|x86.Build.0 = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|x64.Build.0 = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Debug|x86.Build.0 = Debug|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|x64.ActiveCfg = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|x64.Build.0 = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|x86.ActiveCfg = Release|Any CPU
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -305,5 +319,6 @@ Global
 		{3BAD4B67-8E29-46DD-A5F1-27824BB7AEC9} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{964692F1-AD58-441D-99FC-2957017AF83B} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{EAF672EB-8153-471C-AEE9-5BBED807EA91} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{5BD6E9C7-AA2F-4539-AF89-F6959E0CDAE6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

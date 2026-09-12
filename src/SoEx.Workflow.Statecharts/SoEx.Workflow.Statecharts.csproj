@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SoEx.Workflow.Statecharts</RootNamespace>
+    <AssemblyName>SoEx.Workflow.Statecharts</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="XState" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SoEx.Workflow/SoEx.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

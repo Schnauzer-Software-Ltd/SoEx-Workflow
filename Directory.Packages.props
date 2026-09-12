@@ -28,6 +28,9 @@
     <!-- Zeebe (Camunda 8) gRPC community client — the job-worker SDK for the native BPMN flow. -->
     <PackageVersion Include="zb-client" Version="2.10.0" />
     <PackageVersion Include="Elsa" Version="3.7.0" />
+    <!-- statelyai/xstate-csharp. NOT on nuget.org yet; served from the private feed, built from the
+         pinned commit f90200b (2026-09-11). Replace with the official package before any public publish. -->
+    <PackageVersion Include="XState" Version="0.1.0-alpha" />
     <!-- Elsa EF Core persistence (matches core 3.7.0) — for the durable (SQLite) Elsa example host. -->
     <PackageVersion Include="Elsa.Persistence.EFCore" Version="3.7.0" />
     <PackageVersion Include="Elsa.Persistence.EFCore.Sqlite" Version="3.7.0" />
