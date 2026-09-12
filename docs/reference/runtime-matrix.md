@@ -90,8 +90,9 @@ Practical consequences:
 
 - On InProc a completed id can be re-onboarded as a fresh generation; on Restate a key runs once ever.
   Don't assume one rule across engines.
-- On Elsa, make sure the wait is armed before you raise (or use a payload-carrying raise / retry), and
-  wire an `IIdempotencyStore` if you need idempotent raises.
+- On Elsa, make sure the wait is armed before you raise (or retry), and wire an `IIdempotencyStore` if you
+  need idempotent raises. Elsa is also the one adapter that resolves the raise host-side rather than inside
+  the flow, because it drives workflow definitions you author.
 - A re-raise of an already-handled event re-executes its `OnEvent` continuation under a fresh sequence.
   It is not deduplicated by event name, because two raises of one name are two business events; use a
   `raiseId` to make a specific raise idempotent.

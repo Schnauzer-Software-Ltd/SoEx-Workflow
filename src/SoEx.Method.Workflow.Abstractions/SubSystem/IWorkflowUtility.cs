@@ -22,9 +22,19 @@ public interface IWorkflowUtility
     /// </summary>
     Task<StartOutcome> StartAsync(string flowKey, string instanceId, string subject, object firstStep);
 
-    /// <summary>Raises a bare business event onto <paramref name="instanceId"/> — the waiting flow resumes into
-    /// its own pre-sealed continuation.</summary>
-    Task RaiseEventAsync(string flowKey, string instanceId, string eventName);
+    /// <summary>
+    /// Raises a business event onto <paramref name="instanceId"/>. The waiting flow resumes into its own
+    /// pre-sealed continuation either way — <paramref name="eventData"/> does not replace it, it travels with
+    /// it and reaches the step operation as a second argument. The data is sealed under the instance key, so it
+    /// is only ever journaled as ciphertext and the termination shred reaches it.
+    /// <para>Supply data when the raiser knows something the flow could not; leave it null when the event
+    /// itself is the whole message. The flow's step operation must declare a parameter to receive it, or the
+    /// raise is refused at the seal.</para>
+    /// <para>One operation with an optional argument rather than two overloads: SoEx validates an endpoint
+    /// contract for duplicate operation names and refuses the whole topology at composition, so a same-named
+    /// overload on this seam would take every host down at start-up.</para>
+    /// </summary>
+    Task RaiseEventAsync(string flowKey, string instanceId, string eventName, object? eventData = null);
 
     /// <summary>Recovers the subjects the durable index still maps to an instance — backs a manager's
     /// <c>OnRetaining</c> must-retain carve-out while the per-instance key is still live.</summary>

@@ -20,18 +20,28 @@ public sealed class NativeOnboardOrchestration : GovernedTaskOrchestrator<Native
         await context.CallActivityAsync<StepReceipt>("Reserve", new SealedStep(input.Seed, id, 2));
         await context.CallActivityAsync<StepReceipt>("Invite", new SealedStep(input.Seed, id, 3));
 
+        RaisedEvent accepted;
         try
         {
             // The gateway delivers a RaisedEvent wrapper (an optional raise id + the sealed payload bytes);
             // a bare raise carries an empty payload, which still resumes this wait.
-            await context.WaitForExternalEvent<RaisedEvent>("invite-accepted", TimeSpan.FromSeconds(input.TimeoutSeconds));
+            accepted = await context.WaitForExternalEvent<RaisedEvent>(
+                "invite-accepted", TimeSpan.FromSeconds(input.TimeoutSeconds));
         }
         catch (TaskCanceledException)
         {
             return "invite-timed-out";   // the durable timer won the race
         }
 
-        await context.CallActivityAsync<StepReceipt>("Assign", new SealedStep(input.Seed, id, 4));
-        return "assigned";
+        // The raise's payload is carried into THIS step and no other — a native flow decides for itself which
+        // step its event data belongs to, and the framework merges it in as the operation's second argument.
+        // It stays sealed the whole way; the orchestration never sees inside it.
+        StepReceipt assigned = await context.CallActivityAsync<StepReceipt>(
+            "Assign", new SealedStep(input.Seed, id, 4, accepted.Payload));
+
+        // The receipt names who the subscription went to, which is the acceptance's own contribution — the
+        // flow itself only ever knew the placeholder it sealed before anyone had accepted. PII-free by
+        // construction here (the example's confirmed user is not the subject), and it is journaled in clear.
+        return $"assigned:{assigned.Detail}";
     }
 }

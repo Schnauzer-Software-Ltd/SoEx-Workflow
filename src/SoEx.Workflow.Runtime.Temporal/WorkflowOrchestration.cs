@@ -43,6 +43,10 @@ public sealed class WorkflowOrchestration
     {
         byte[] current = seed;
         long sequence = startSequence;
+        // Raise-time event data waiting to be handed to the next step activity. It belongs to exactly one
+        // dispatch — the continuation a raise resumed — so it is cleared right after that call rather than
+        // travelling on with the flow (matching the InProc driver's own eventData local).
+        byte[] eventData = [];
 
         try
         {
@@ -50,7 +54,8 @@ public sealed class WorkflowOrchestration
             {
                 long step = sequence++;
                 WorkflowActionDto action = await Wf.ExecuteActivityAsync(
-                    (WorkflowActivities a) => a.RunStep(new StepInput(current, step)), ActivityOptions);
+                    (WorkflowActivities a) => a.RunStep(new StepInput(current, step, eventData)), ActivityOptions);
+                eventData = [];
 
                 switch (action.Kind)
                 {
@@ -64,7 +69,7 @@ public sealed class WorkflowOrchestration
                         break;
 
                     case "wait":
-                        current = await AwaitSignalAsync(action);
+                        (current, eventData) = await AwaitSignalAsync(action);
                         break;
 
                     case "delay":
@@ -110,7 +115,9 @@ public sealed class WorkflowOrchestration
         }
     }
 
-    private async Task<byte[]> AwaitSignalAsync(WorkflowActionDto wait)
+    // Returns the next step to run and the raise-time event data to hand it (empty when there is none — the
+    // timer path never carries any).
+    private async Task<(byte[] Step, byte[] EventData)> AwaitSignalAsync(WorkflowActionDto wait)
     {
         WaitBranchWire[] branches = WaitBranches.Of(wait.Branches, wait.EventName, wait.OnEvent);
         bool AnyDelivered() => branches.Any(b => _events.ContainsKey(b.EventName));
@@ -125,7 +132,7 @@ public sealed class WorkflowOrchestration
 
         return delivered
             ? Resume(branches)
-            : wait.OnTimeout is { Length: > 0 } ? wait.OnTimeout
+            : wait.OnTimeout is { Length: > 0 } ? (wait.OnTimeout, [])
             : throw new InvalidOperationException(
                 $"durable timer elapsed waiting for {WaitBranches.Quoted(branches)} with no OnTimeout step");
     }
@@ -133,7 +140,7 @@ public sealed class WorkflowOrchestration
     // Which branch resumed the wait. When more than one of its signals has already been delivered, the FIRST
     // branch declared wins — a property of the flow, not of Temporal's delivery order. Deterministic: the
     // scan runs in workflow code over a list rebuilt identically on every replay.
-    private byte[] Resume(WaitBranchWire[] branches)
+    private (byte[] Step, byte[] EventData) Resume(WaitBranchWire[] branches)
     {
         WaitBranchWire branch = branches.First(b => _events.ContainsKey(b.EventName));
         return Raised(branch, Consume(branch.EventName));
@@ -148,13 +155,17 @@ public sealed class WorkflowOrchestration
         return payload;
     }
 
-    // A signal raised with a payload carries the next step; one raised empty resumes into the continuation its
-    // OWN branch declared (sealed and journaled by the step activity at wait time). With neither a payload nor
-    // an OnEvent step there is nothing to resume into — throw descriptively rather than continuing with empty
-    // bytes that would only fail later at decrypt (matching the InProc driver instead of diverging from it).
-    private static byte[] Raised(WaitBranchWire branch, byte[]? payload) =>
-        payload is { Length: > 0 } ? payload
-        : branch.OnEvent is { Length: > 0 } ? branch.OnEvent
+    // The resolution rule for a raise landing on a branch, identical on every adapter (see WorkflowDriver.Raised,
+    // the InProc reference).
+    //
+    // A branch that declared an OnEvent always resumes into it — that continuation is the flow's own decision
+    // about what this event means, and a raiser is in no position to overrule it. A payload raised alongside is
+    // carried in as event data instead of replacing the step, which is what lets an outside caller contribute
+    // data without knowing (or being able to construct) the flow's next state. Only a branch that declared
+    // nothing leaves the next step for the raiser to supply.
+    private static (byte[] Step, byte[] EventData) Raised(WaitBranchWire branch, byte[]? payload) =>
+        branch.OnEvent is { Length: > 0 } ? (branch.OnEvent, payload ?? [])
+        : payload is { Length: > 0 } ? (payload, [])
         : throw new InvalidOperationException(
             $"'{branch.EventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
 

@@ -7,15 +7,26 @@ The value a portable-model step operation returns; the driver routes it onto the
 primitives. The framework envelopes the typed step/result payloads, so you pass DTOs rather than raw
 bytes. Namespace: `SoEx.Workflow`.
 
-When a `WaitForEvent` resumes, the event payload becomes the next step. An event raised with no payload
-resumes into the `OnEvent` step of the branch it was raised at.
+When a `WaitForEvent` resumes, the branch it was raised at decides what runs next. If that branch declared
+an `OnEvent` step, that step runs — whether the raise was bare or carried data, and the data is handed to
+your step operation as a second argument. Only a branch that declared no `OnEvent` lets the raiser supply
+the next step itself.
+
+| Branch declared `OnEvent` | Raise carried | What runs |
+|---|---|---|
+| yes | data | the branch's `OnEvent` step, receiving the data |
+| yes | nothing | the branch's `OnEvent` step |
+| no | data | the raised payload, as the next step |
+| no | nothing | nothing — the raise is rejected |
+
+See [Receiving data with an event](#receiving-data-with-an-event).
 
 | Action | Meaning |
 |---|---|
 | `Complete(object? Result)` | The instance is finished; `Result` is your typed result. Journaled in clear, so keep it PII-free. |
 | `RaiseIntoNext(object NextStep)` | Route the typed `NextStep` DTO into the next step (thread saga state forward). |
-| `WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)` | Park until one of the branches' events is raised. With `Timeout`, they race a durable timer; if the timer wins, resume into the `OnTimeout` step. A payload-carrying event becomes the next step; an empty event resumes into that branch's `OnEvent` step. Every continuation is sealed at wait time and journaled. |
-| `EventBranch(string EventName, object? OnEvent = null)` | One way a wait can be resumed: the event name, and the step a bare raise of that name means. |
+| `WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)` | Park until one of the branches' events is raised. With `Timeout`, they race a durable timer; if the timer wins, resume into the `OnTimeout` step. Otherwise the branch that was raised decides, per the table above. Every continuation is sealed at wait time and journaled. |
+| `EventBranch(string EventName, object? OnEvent = null)` | One way a wait can be resumed: the event name, and the step a raise of that name resumes into. |
 | `Delay(TimeSpan Duration)` | Park on a durable timer. |
 | `Loop(object CarryState)` | Continue-as-new, carrying the typed `CarryState` across the boundary. |
 
@@ -26,7 +37,7 @@ Every action also carries `Subjects`, the people this step learned about while i
 
 A parked instance often has more than one thing that can happen to it. An onboarding flow waiting for
 an email verification may also offer a resend button; an approval may also be cancelled or escalated.
-Give the wait one branch per event, and each branch says what a bare raise of its own name means:
+Give the wait one branch per event, and each branch says what a raise of its own name means:
 
 ```csharp
 return new WorkflowAction.WaitForEvent(
@@ -49,6 +60,44 @@ flow rather than of the engine's delivery order.
 Two branches of one wait cannot share an event name. The name is the delivery key on every runtime, so
 duplicates could not be told apart at resume; the constructor rejects them.
 
+## Receiving data with an event
+
+Often the raiser knows something the flow could not have known when it parked. An invite may be accepted
+by someone other than the person it was sent to; a payment may clear for a different amount than the one
+quoted. The flow still decides which step runs next — it sealed that step at wait time — and the raiser
+contributes only what it knows.
+
+Declare a second parameter on your step operation to receive it:
+
+```csharp
+public interface IOnboardManager
+{
+    Task<WorkflowAction> Step(OnboardStep step, InviteAccepted? accepted = null);
+}
+```
+
+It is non-null only on a step that a data-carrying raise resumed into, and only for that one dispatch —
+the data does not travel on to later steps. Seal it on the raising side with `SealEventData`, which is a
+different seal from the `Seal` that supplies a step:
+
+```csharp
+await gateway.RaiseEventAsync(instanceId, "invite-accepted",
+    sealer.SealEventData(instanceId, new InviteAccepted(whoAccepted)));
+```
+
+Two things are worth knowing:
+
+- **The two seals are not interchangeable.** Sealing a step where data is expected, or data where a step
+  is expected, is refused with a message naming both types — not quietly reinterpreted.
+- **Raising data at an operation with no second parameter fails loudly.** The instance parks with its key
+  retained rather than running the continuation as though nothing had been sent; re-drive it once the
+  component declares the parameter. This is the one case where adding data to an existing raise changes
+  the behaviour of a flow that is already in flight.
+
+Event data carries no ambient context of its own. The flow's own subject context travels on the
+continuation, as it has since the seed, and a subject the raise tells you about is enrolled through
+`Subjects` rather than by riding in on the data.
+
 ## Notes
 
 - `OnEvent` is the branch-level twin of `OnTimeout`: it lets a bare event (no payload, no key material)
@@ -57,7 +106,8 @@ duplicates could not be told apart at resume; the constructor rejects them.
 - `Loop` carries the logical instance id and per-instance key across the continue-as-new boundary, and
   the carried state is sealed like any other journaled payload.
 - A branch with no `OnEvent` rejects a bare raise at that name, because the flow declared no meaning
-  for it. The branch still accepts a payload-carrying raise.
+  for it. It still accepts a payload, which then becomes the next step.
+- The `OnTimeout` path never carries event data — nothing was raised.
 - `WaitForEvent` has a single constructor by design. The action travels through your host's message
   serializer as a polymorphic response, and a second public constructor leaves the serializer no
   unambiguous way to rebuild the value, so a one-name convenience overload cannot exist.

@@ -65,9 +65,15 @@ return new WorkflowAction.WaitForEvent(
 ```
 
 Now `gateway.RaiseEventAsync(instanceId, "account-verified")` resumes the wait into the journaled
-`OnEvent` step, with no payload, no flow knowledge, and no key material on the caller's side. An event
-raised with a sealed payload still wins and becomes the next step. A bare raise into a wait with no
-`OnEvent` fails, because the flow declared no meaning for it.
+`OnEvent` step, with no payload, no flow knowledge, and no key material on the caller's side. A bare raise
+into a wait with no `OnEvent` fails, because the flow declared no meaning for it.
+
+A branch that declared an `OnEvent` runs it whether the raise was bare or carried data — a raiser does not
+displace the step the flow chose. To send data along with the raise, seal it with `SealEventData` and
+receive it as a second parameter on your step operation; see
+[Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event). Only a branch
+that declared no `OnEvent` lets a raised payload be the next step itself, and that is the one case where
+the caller has to know the flow well enough to author it.
 
 ## Let more than one event resume a wait
 

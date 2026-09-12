@@ -178,6 +178,22 @@ await gateway.StartAsync(instanceId, seed);                               // see
 await gateway.RaiseEventAsync(instanceId, "invite-accepted");            // a correlated Zeebe message
 ```
 
+**Event data on Zeebe.** A native flow decides for itself which step a raise's data belongs to: keep the
+event your wait received and pass its payload to that one `ExecuteAsync` call. On Zeebe that has a twist,
+because the gateway publishes a raise's payload as the process variable `__event`, and a Zeebe process
+variable persists in its flow scope once set — a worker that forwarded it unconditionally would hand the
+same stale raise to every later step in the scope. So it is opt-in per service task, via an
+`eventVariable` task header naming the variable to read, and you use the `OpenStepWorker` overload whose
+delegate takes the extra `byte[]`:
+
+```csharp
+using var steps = ZeebeWorkflowHost.OpenStepWorker(client, "onboard-step", step,
+    async (id, seq, kind, seed, eventData) => await Native.RunSealed(step, id, seq, kind, seed, eventData));
+```
+
+Put the header on the task that follows the catch event and nowhere else. Clearing the variable afterwards
+is BPMN modelling — an output mapping that overwrites it — not something the framework can do for you.
+
 The framework writes exactly two process variables: the sealed seed and the PII-free instance id. It
 can't police a consumer's own BPMN io-mappings, so `DeployAsync` lints each resource as it deploys and
 returns the findings (it calls `ZeebeWorkflowHost.ValidateResource` internally — you can also run that

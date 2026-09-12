@@ -3,7 +3,17 @@ using Temporalio.Activities;
 
 namespace SoEx.Workflow.Runtime.Temporal;
 
-public sealed record StepInput(byte[] Payload, long Sequence);
+public sealed record StepInput(byte[] Payload, long Sequence, byte[]? EventData = null)
+{
+    /// <summary>
+    /// Raise-time event data to merge into this dispatch, if any. Normalised to empty rather than null because
+    /// this DTO is recorded in workflow history: a pre-deploy activity-input history has no such field, and the
+    /// SDK decodes an absent field as null rather than replaying a default — normalising here means
+    /// <see cref="WorkflowActivities.RunStep"/> and the 4-arg dispatch it calls never have to treat "no field"
+    /// and "null field" as two different cases.
+    /// </summary>
+    public byte[] EventData { get; init; } = EventData ?? [];
+}
 
 public sealed record TerminateInput(long Sequence);
 
@@ -54,7 +64,7 @@ public sealed class WorkflowActivities(IGovernedStep step, GovernedTermination t
         WorkflowAction action;
         try
         {
-            action = (step.DispatchGovernedAsync(input.Payload, instanceId, input.Sequence).GetAwaiter().GetResult()) as WorkflowAction
+            action = (step.DispatchGovernedAsync(input.Payload, input.EventData, instanceId, input.Sequence).GetAwaiter().GetResult()) as WorkflowAction
                 ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
 
             // Fold in whatever this step enrolled before the flattening below guards or seals anything. Inside

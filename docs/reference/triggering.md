@@ -44,8 +44,9 @@ public interface IWorkflowGateway
 ```
 
 - `StartAsync` submits a new instance.
-- `RaiseEventAsync` raises a named event at a running one. An omitted payload resumes a portable wait
-  into its `OnEvent` step. A stable `raiseId` makes a specific raise idempotent (per-engine — see the
+- `RaiseEventAsync` raises a named event at a running one. A portable wait resumes into the branch's
+  `OnEvent` step, with anything the raise carried arriving as event data; a branch that declared no
+  `OnEvent` takes the raised payload as the next step instead. A stable `raiseId` makes a specific raise idempotent (per-engine — see the
   matrix).
 
 | Runtime | Gateway | Notes |
@@ -91,7 +92,7 @@ public interface IWorkflowUtility
 | Member | Use when |
 |---|---|
 | `StartAsync` | Start a flow. Seals `firstStep` under the instance's key, binding `subject` as the ambient. Returns `AlreadyExists` as data rather than throwing, because a re-derived duplicate start is the common case and the answer has to survive the proxy hop. |
-| `RaiseEventAsync` | Continue a parked flow with a bare business event. No payload: the flow resumes into the continuation it sealed at wait time, so the caller needs no flow knowledge. |
+| `RaiseEventAsync` | Continue a parked flow with a business event. The flow resumes into the continuation it sealed at wait time, so the caller needs no flow knowledge; seal data with `SealEventData` to send something along with it. |
 | `SubjectsForAsync` | Recover the subjects still mapped to an instance — a must-retain carve-out in `OnRetaining` is the case it exists for. Goes quiet once the instance is shredded, because it opens a blob sealed under that instance's key. |
 | `InstancesForAsync` | The reverse: which of this flow's instances a subject is in. |
 

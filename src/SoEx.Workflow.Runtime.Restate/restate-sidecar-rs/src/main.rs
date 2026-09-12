@@ -73,18 +73,36 @@ fn parse_exec_key(exec_key: &str) -> (String, i64) {
     (instance_id, sequence)
 }
 
-/// Pick the envelope to resume a wait into, or fail descriptively when there is none: `primary` (the raised
-/// payload, or the on-timeout step) wins if non-empty, else `fallback` (the on-event step) if non-empty, else
-/// a terminal error — so an empty resume does not continue with an empty envelope that would only fail later
-/// at decrypt. Matches the InProc driver's descriptive throw instead of diverging from it.
-fn resume_or_fail(primary: String, fallback: String, event_name: &str, what: &str) -> Result<String, HandlerError> {
-    if !primary.is_empty() {
-        Ok(primary)
-    } else if !fallback.is_empty() {
-        Ok(fallback)
+/// Resolve what a wait resumes into once a branch's promise settles, merging the branch's pre-sealed
+/// `on_event` continuation with any payload the raiser sent. Returns `(next step payload, event data)`;
+/// event data is opaque to the sidecar, exactly like `payload`, and travels to exactly one following
+/// `/step` call (the caller is responsible for clearing it after that call).
+///
+/// | branch has `on_event` | raise payload | next step  | event data |
+/// |---|---|---|---|
+/// | yes | non-empty | `on_event` | the payload |
+/// | yes | empty     | `on_event` | none |
+/// | no  | non-empty | the payload | none |
+/// | no  | empty     | — (terminal error: nothing to resume into) |
+///
+/// The terminal-error case matches the InProc driver's descriptive throw instead of diverging from it.
+fn resolve_resume(resolved: String, on_event: String, event_name: &str) -> Result<(String, String), HandlerError> {
+    if !on_event.is_empty() {
+        // A resolved-but-empty raise carries no event data here too, since `resolved` is itself empty.
+        Ok((on_event, resolved))
+    } else if !resolved.is_empty() {
+        Ok((resolved, String::new()))
     } else {
-        Err(TerminalError::new(format!("'{event_name}' {what}")).into())
+        Err(TerminalError::new(format!(
+            "'{event_name}' was raised with an empty payload and its branch of the wait has no on-event step"
+        ))
+        .into())
     }
+}
+
+/// The on-timeout path never carries event data — only a raised event can (see [`resolve_resume`]).
+fn resolve_timeout(on_timeout: String) -> (String, String) {
+    (on_timeout, String::new())
 }
 
 /// Payload of either workflow's `raise_event` handler:
@@ -108,12 +126,20 @@ struct RaiseEvent {
 // ===========================================================================================
 
 /// Request to the .NET step host `/step`. camelCase to match the ASP.NET minimal-API binder.
+///
+/// `event_data` is ALWAYS present (never omitted, never `null`) — an empty string when a step carries
+/// none. It must stay a plain `String`, not `Option<String>`: a nullable/absent field on this wire
+/// decodes as a type error on the .NET side and fails every action's invocation, not just the one that
+/// omitted it (see the `x-soex-wire-version` note in the module docs). It carries the raiser's payload
+/// when a wait resolves into a branch's `on_event` step with a non-empty raise (see `resolve_resume`);
+/// otherwise it is cleared to `""` before the next `/step` call, so it reaches exactly one step.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StepRequest {
     payload: String,
     instance_id: String,
     sequence: i64,
+    event_data: String,
 }
 
 /// Request to the .NET step host `/terminate` (the termination erasure lifecycle).
@@ -192,7 +218,11 @@ struct ActionDto {
 /// The wire-contract version this sidecar speaks, sent on every call so the .NET host can refuse a stale
 /// binary running an old contract. Must match `RestateWorkflowHost.WireVersion` on the .NET side; bump both in
 /// lock-step on any breaking change to the /step or /terminate request/response shapes.
-const WIRE_VERSION: &str = "2";
+///
+/// Version 3 added `StepRequest.event_data` (always-present, empty-string-when-absent): a wait resumed
+/// into a branch's `on_event` step now carries the raiser's non-empty payload separately as event data
+/// instead of discarding it. See `resolve_resume`.
+const WIRE_VERSION: &str = "3";
 const WIRE_VERSION_HEADER: &str = "x-soex-wire-version";
 
 async fn call_step(client: &reqwest::Client, step_url: &str, token: &str, req: &StepRequest) -> reqwest::Result<ActionDto> {
@@ -247,6 +277,9 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
         // termination; the sequence resumes from the suffix. See parse_exec_key.
         let (instance_id, mut sequence) = parse_exec_key(&ctx.key().to_string());
         let mut current = seed;
+        // The raiser's payload when a wait resumed into a branch's on-event step (see `resolve_resume`);
+        // empty otherwise. Carried to exactly the next `/step` call, then cleared — one dispatch only.
+        let mut event_data = String::new();
 
         loop {
             // one Manager step, journalled durably
@@ -254,6 +287,7 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                 payload: current.clone(),
                 instance_id: instance_id.clone(),
                 sequence,
+                event_data: event_data.clone(),
             };
             let (client, url, token) = (self.client.clone(), self.step_url.clone(), self.token.clone());
             let dto: ActionDto = ctx
@@ -262,6 +296,7 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                 .await?
                 .into_inner();
             sequence += 1;
+            event_data = String::new(); // consumed by exactly the /step call above
 
             match dto.kind.as_str() {
                 "complete" => {
@@ -312,15 +347,14 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                     current = if winner < promises.len() {
                         let branch = branches[winner].clone();
                         let resolved = promises.swap_remove(winner).await?;
-                        // An empty raise resumes into THAT branch's pre-sealed on-event step; a payload
-                        // wins. With neither there is nothing to resume into — fail descriptively rather
-                        // than continue with an empty envelope that only fails later at decrypt.
-                        resume_or_fail(
-                            resolved,
-                            branch.on_event.clone(),
-                            &branch.event_name,
-                            "was raised with an empty payload and its branch of the wait has no on-event step",
-                        )?
+                        // A raised branch resumes into that branch's pre-sealed on-event step when it has
+                        // one, carrying any non-empty payload separately as event data; with no on-event
+                        // step the payload becomes the next step itself. With neither there is nothing to
+                        // resume into — fail descriptively rather than continue with an empty envelope
+                        // that only fails later at decrypt. See `resolve_resume`.
+                        let (next, data) = resolve_resume(resolved, branch.on_event.clone(), &branch.event_name)?;
+                        event_data = data;
+                        next
                     } else {
                         // Await the winner even when it is the timer: select() reports WHICH future
                         // completed, and the SDK's own combinators then await that future to consume its
@@ -334,7 +368,10 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                             .into());
                         }
 
-                        dto.on_timeout.clone()
+                        // on-timeout never carries event data (only a raised event can).
+                        let (next, data) = resolve_timeout(dto.on_timeout.clone());
+                        event_data = data;
+                        next
                     };
                 }
                 "loop" => {
@@ -343,6 +380,8 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                     // instance_id~<absolute sequence>: unique per generation (deterministic, replay-safe),
                     // it keeps the logical instance id stable (carrying the key) AND lets the next
                     // generation resume the sequence so idempotency keys never collide across generations.
+                    // Only the current step (dto.payload) crosses the boundary — event_data does not; the
+                    // next generation's run() starts its own event_data at "".
                     let next_id = format!("{instance_id}~{sequence}");
                     // Record this generation's successor so a raise that lands here after the continue-as-new
                     // is forwarded to the live generation (see raise_event) instead of resolving a promise on
@@ -630,22 +669,44 @@ mod tests {
         assert_eq!(parse_exec_key("onboard-1~notanumber"), ("onboard-1".to_string(), 0));
     }
 
-    // --- resume_or_fail: which envelope a wait resumes into ------------------------------------------
+    // --- resolve_resume: the merged on-event/event-data resolution table -----------------------------
 
     #[test]
-    fn resume_prefers_primary_when_present() {
-        assert_eq!(resume_or_fail("raised".into(), "onevent".into(), "e", "missing").unwrap(), "raised");
+    fn on_event_branch_with_a_non_empty_raise_resumes_into_on_event_carrying_the_payload_as_event_data() {
+        // NEW behaviour: the branch's on-event step is next, and the raiser's payload travels separately.
+        let (next, data) = resolve_resume("raised".into(), "onevent".into(), "e").unwrap();
+        assert_eq!(next, "onevent");
+        assert_eq!(data, "raised");
     }
 
     #[test]
-    fn resume_falls_back_to_event_step_when_primary_empty() {
-        assert_eq!(resume_or_fail(String::new(), "onevent".into(), "e", "missing").unwrap(), "onevent");
+    fn on_event_branch_with_an_empty_raise_resumes_into_on_event_with_no_event_data() {
+        let (next, data) = resolve_resume(String::new(), "onevent".into(), "e").unwrap();
+        assert_eq!(next, "onevent");
+        assert_eq!(data, "", "unchanged: a bare raise into a branch with on_event carries no event data");
     }
 
     #[test]
-    fn resume_fails_descriptively_when_both_empty() {
-        // An empty resume must error here, not continue with an empty envelope that only fails later at decrypt.
-        assert!(resume_or_fail(String::new(), String::new(), "invite-accepted", "had no payload").is_err());
+    fn no_on_event_branch_with_a_non_empty_raise_resumes_into_the_payload_with_no_event_data() {
+        let (next, data) = resolve_resume("raised".into(), String::new(), "e").unwrap();
+        assert_eq!(next, "raised");
+        assert_eq!(data, "", "unchanged: the payload becomes the next step itself, not event data");
+    }
+
+    #[test]
+    fn no_on_event_branch_with_an_empty_raise_fails_descriptively() {
+        // Unchanged: an empty resume must error here, not continue with an empty envelope that only fails
+        // later at decrypt.
+        assert!(resolve_resume(String::new(), String::new(), "invite-accepted").is_err());
+    }
+
+    // --- resolve_timeout: the on-timeout path never carries event data --------------------------------
+
+    #[test]
+    fn timeout_resumes_into_on_timeout_with_no_event_data() {
+        let (next, data) = resolve_timeout("ontimeout".into());
+        assert_eq!(next, "ontimeout");
+        assert_eq!(data, "", "the timeout path never carries event data — only a raised event can");
     }
 
     // --- intern_event_name: bounded, idempotent interning -------------------------------------------
@@ -811,7 +872,12 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let req = StepRequest { payload: sealed.to_string(), instance_id: "inst-1".to_string(), sequence: 0 };
+        let req = StepRequest {
+            payload: sealed.to_string(),
+            instance_id: "inst-1".to_string(),
+            sequence: 0,
+            event_data: String::new(),
+        };
         let dto = call_step(&client, &server.uri(), "test-token", &req).await.unwrap();
 
         assert_eq!(dto.kind, "complete");
@@ -822,6 +888,9 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&received.body).unwrap();
         assert_eq!(body["payload"], sealed, "the sealed payload crossed verbatim — the sidecar did not touch it");
         assert_eq!(body["instanceId"], "inst-1");
+        // eventData must ALWAYS be present on the wire, even when empty — never omitted, never null. A
+        // missing/nullable field here fails the whole invocation on the .NET side, not just this one.
+        assert_eq!(body["eventData"], "", "eventData is always serialized, empty string when there is none");
     }
 
     #[tokio::test]
@@ -833,7 +902,12 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let req = StepRequest { payload: "cA==".to_string(), instance_id: "inst-1".to_string(), sequence: 0 };
+        let req = StepRequest {
+            payload: "cA==".to_string(),
+            instance_id: "inst-1".to_string(),
+            sequence: 0,
+            event_data: String::new(),
+        };
         let result = call_step(&client, &server.uri(), "test-token", &req).await;
         assert!(result.is_err(), "a 500 from the step host is an error, not a panic or a silent success");
     }

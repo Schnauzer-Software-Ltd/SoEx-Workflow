@@ -26,12 +26,26 @@ public interface IGovernedStep
     IMessageSerializer Serializer { get; }
 
     /// <summary>
+    /// True when the governed operation declares a second parameter, and so can receive raise-time event
+    /// data alongside its step. An adapter reads it to decide whether carrying event data is worth the
+    /// journal space; the dispatch path enforces it either way.
+    /// </summary>
+    bool AcceptsEventData { get; }
+
+    /// <summary>
     /// Wraps a typed step DTO into the opaque durable envelope and <b>seals</b> it under the
     /// instance key (minting the key on first use). The returned bytes are ciphertext —
     /// the only form the framework ever hands a backend to persist, so destroying the key at
     /// termination renders the journaled payload unrecoverable (crypto-shred).
     /// </summary>
     byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null);
+
+    /// <summary>
+    /// Wraps raise-time event <b>data</b> into the opaque durable envelope and seals it under the instance
+    /// key — the form a raiser uses to feed the flow's own declared continuation rather than to supply the
+    /// next step. Refused unless the governed operation declares a parameter to receive it.
+    /// </summary>
+    byte[] SealEventData(string instanceId, object eventData);
 
     /// <summary>Unseals a sealed envelope and returns the ambient bytes it carries (to flow onto the next step).</summary>
     byte[]? AmbientOf(string instanceId, byte[] sealedEnvelope);
@@ -89,6 +103,18 @@ public interface IGovernedStep
 
     /// <summary>Unseal, govern, then dispatch a sealed envelope, returning the entrypoint's result object.</summary>
     Task<object?> DispatchGovernedAsync(byte[] sealedEnvelope, string instanceId, long sequence);
+
+    /// <summary>
+    /// As <see cref="DispatchGovernedAsync(byte[],string,long)"/>, additionally merging a sealed event-data
+    /// envelope into the step before anything reads it — the dispatch a driver performs when a raise carrying
+    /// data resumed a branch that had declared a continuation. Empty or null event data is the plain dispatch.
+    /// <para>
+    /// The merge is invisible downstream on purpose: the idempotency key is still taken from the
+    /// continuation's own DTO type, so a raise carrying data and a bare raise of the same branch collapse to
+    /// the same effect — which is what keeps a redelivered raise safe.
+    /// </para>
+    /// </summary>
+    Task<object?> DispatchGovernedAsync(byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence);
 }
 
 /// <summary>
@@ -111,6 +137,7 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     private readonly InstanceGovernor _governor;
     private readonly WorkflowSealer _sealer;
     private readonly ISubjectMatcher _matcher;
+    private readonly Type? _eventDataType;
     private readonly bool _clearJournalResult;
     private readonly WorkflowMetrics? _metrics;
 
@@ -130,7 +157,10 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         _keys = keys;
         _index = index;
         _governor = new InstanceGovernor(keys, index);
-        OperationName = ResolveOperation(operationName);
+        MethodInfo operation = ResolveOperation(operationName);
+        OperationName = operation.Name;
+        _eventDataType = WorkflowEnvelope.EventDataType(typeof(I), operation.Name);
+        AcceptsEventData = _eventDataType is not null;
         _sealer = new WorkflowSealer(keys, serializer, OperationName, tombstone, typeof(I));
         _matcher = subjectMatcher ?? SubstringSubjectMatcher.Default;
         _clearJournalResult = clearJournalResult;
@@ -139,20 +169,35 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
 
     // The governed operation: the contract's sole method by default, or — for a multi-operation
     // entrypoint (one component modelling several flows) — the one named by the binding.
-    private static string ResolveOperation(string? operationName)
+    private static MethodInfo ResolveOperation(string? operationName)
     {
         MethodInfo[] methods = typeof(I).GetMethods();
+        MethodInfo resolved;
         if (operationName is null)
         {
-            return methods.Length == 1
-                ? methods[0].Name
+            resolved = methods.Length == 1
+                ? methods[0]
                 : throw new InvalidOperationException(
                     $"{typeof(I).Name} has {methods.Length} operations; the binding must name which one to govern");
         }
+        else
+        {
+            resolved = methods.SingleOrDefault(m => m.Name == operationName)
+                ?? throw new InvalidOperationException(
+                    $"{typeof(I).Name} has no single operation named '{operationName}'");
+        }
 
-        return methods.SingleOrDefault(m => m.Name == operationName)?.Name
-            ?? throw new InvalidOperationException(
-                $"{typeof(I).Name} has no single operation named '{operationName}'");
+        // One parameter is a step; two is a step followed by raise-time event data. Anything else cannot be
+        // dispatched at all — the framework builds the argument array itself and has nothing to fill a third
+        // slot with — so it is caught at composition rather than on the first step of a live instance.
+        int arity = resolved.GetParameters().Length;
+        if (arity is not (1 or 2))
+        {
+            throw new InvalidOperationException(
+                $"'{typeof(I).Name}.{resolved.Name}' declares {arity} parameters; a governed step operation takes its step DTO, optionally followed by the event data a raise may carry");
+        }
+
+        return resolved;
     }
 
     /// <summary>The consumer's step-operation name, discovered from the contract.</summary>
@@ -161,6 +206,9 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     /// <summary>The serializer the host pipeline uses — reused for envelope/result bytes.</summary>
     public IMessageSerializer Serializer { get; }
 
+    /// <summary>True when the governed operation declares a second parameter to receive raise-time event data.</summary>
+    public bool AcceptsEventData { get; }
+
     /// <summary>
     /// Wraps a typed step DTO into the opaque durable envelope and seals it under the instance
     /// key (minting the key on first use). The bytes are ciphertext — the only form a backend ever
@@ -168,6 +216,10 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     /// </summary>
     public byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null) =>
         _sealer.Seal(instanceId, stepDto, ambientContext);
+
+    /// <summary>Seals raise-time event data for the governed operation's second parameter. See the interface member.</summary>
+    public byte[] SealEventData(string instanceId, object eventData) =>
+        _sealer.SealEventData(instanceId, eventData);
 
     /// <summary>Unseals a sealed envelope and returns the ambient bytes it carries (to flow onto the next step).</summary>
     public byte[]? AmbientOf(string instanceId, byte[] sealedEnvelope) =>
@@ -311,24 +363,33 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     public IdempotencyKey KeyFor(byte[] sealedEnvelope, string instanceId, long sequence) =>
         _extractor.Extract(_keys.Decrypt(instanceId, sealedEnvelope), instanceId, sequence).IdempotencyKey;
 
-    /// <summary>Runs a typed step and returns its typed business result.</summary>
-    public async Task<TResult> ExecuteAsync<TResult>(StepContext ctx, object stepDto) =>
-        (TResult)(await ExecuteAsync(ctx, stepDto))!;
+    /// <summary>
+    /// Runs a typed step and returns its typed business result. A native flow that awaited an event passes
+    /// the sealed event data it received, and the step operation's second parameter receives it.
+    /// </summary>
+    public async Task<TResult> ExecuteAsync<TResult>(StepContext ctx, object stepDto, byte[]? sealedEventData = null) =>
+        (TResult)(await ExecuteAsync(ctx, stepDto, sealedEventData))!;
 
     /// <summary>Runs a typed step and returns its business result as an object.</summary>
-    public Task<object?> ExecuteAsync(StepContext ctx, object stepDto) =>
-        DispatchGovernedAsync(SealStep(ctx.InstanceId, stepDto, ctx.AmbientContext), ctx.InstanceId, ctx.Sequence);
+    public Task<object?> ExecuteAsync(StepContext ctx, object stepDto, byte[]? sealedEventData = null) =>
+        DispatchGovernedAsync(
+            SealStep(ctx.InstanceId, stepDto, ctx.AmbientContext), sealedEventData, ctx.InstanceId, ctx.Sequence);
 
     /// <summary>
     /// Unseal under the instance key, govern (key mint + subject indexing) then dispatch, returning the
     /// entrypoint's result object. With an idempotency store the effect applies once per triple and the
     /// recorded result is itself sealed, so the idempotency store never holds plaintext payload.
     /// </summary>
-    public async Task<object?> DispatchGovernedAsync(byte[] sealedEnvelope, string instanceId, long sequence)
+    public Task<object?> DispatchGovernedAsync(byte[] sealedEnvelope, string instanceId, long sequence) =>
+        DispatchGovernedAsync(sealedEnvelope, null, instanceId, sequence);
+
+    /// <summary>Unseal, merge any raise-time event data, govern, then dispatch. See the interface member.</summary>
+    public async Task<object?> DispatchGovernedAsync(
+        byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence)
     {
         try
         {
-            object? result = await DispatchGovernedCoreAsync(sealedEnvelope, instanceId, sequence);
+            object? result = await DispatchGovernedCoreAsync(sealedEnvelope, sealedEventData, instanceId, sequence);
             _metrics?.StepExecuted();
             return result;
         }
@@ -341,9 +402,10 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         }
     }
 
-    private async Task<object?> DispatchGovernedCoreAsync(byte[] sealedEnvelope, string instanceId, long sequence)
+    private async Task<object?> DispatchGovernedCoreAsync(
+        byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence)
     {
-        byte[] stepEnvelope = _keys.Decrypt(instanceId, sealedEnvelope);
+        byte[] stepEnvelope = MergeEventData(_keys.Decrypt(instanceId, sealedEnvelope), sealedEventData, instanceId);
         StepMetadata meta = _extractor.Extract(stepEnvelope, instanceId, sequence);
         _governor.OnStep(meta);
 
@@ -366,6 +428,52 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
                 return _keys.Encrypt(instanceId, Serializer.Serialize(result));
             });
         return Serializer.Deserialize<object>(_keys.Decrypt(instanceId, sealedResult));
+    }
+
+    // Folds raise-time event data into the step envelope BEFORE anything reads it, so metadata extraction,
+    // governance, the idempotency key and the dispatch all see one ordinary step. Doing it here rather than
+    // in each driver is what keeps the merge inside the governed pipeline: the data is decrypted under the
+    // same instance key, and a component cannot receive it by any route that skipped the governance.
+    private byte[] MergeEventData(byte[] stepEnvelope, byte[]? sealedEventData, string instanceId)
+    {
+        if (sealedEventData is not { Length: > 0 })
+        {
+            // No data to merge, but the envelope may still predate the event-data parameter — a continuation
+            // journaled by an earlier build carries one argument where the operation now declares two. Only
+            // operations that take event data can be short, so a one-parameter step pays nothing here.
+            return AcceptsEventData ? WorkflowEnvelope.PadToArity(Serializer, stepEnvelope, typeof(I)) : stepEnvelope;
+        }
+
+        if (!AcceptsEventData)
+        {
+            // Fail loud rather than drop it. The raiser supplied data this flow has nowhere to put, and
+            // running the continuation without it would be indistinguishable from success — the instance
+            // would carry on having silently ignored the only thing the raise was for. The driver's catch
+            // parks the instance with its key retained, so an operator re-drives it once the component
+            // declares the parameter. Type and operation names only: the data itself is the plaintext the
+            // seal exists to keep out of a journal.
+            throw new InvalidOperationException(
+                $"'{OperationName}' was raised at with event data but declares only its step parameter — give it a second parameter to receive the data, or raise the event bare");
+        }
+
+        object eventData = WorkflowEnvelope.EventDataArg(Serializer, _keys.Decrypt(instanceId, sealedEventData), typeof(I))
+            ?? throw new InvalidOperationException(
+                $"the event data raised at '{OperationName}' carried no argument to hand to the step");
+
+        // Check the type at the merge as well as at the seal. The seal catches a raiser who named the wrong
+        // type; this catches one who used the wrong SEAL — raising a step (SealStep) at a branch that declared
+        // an OnEvent, where the step half is not theirs to supply. Without it that blob rides the event-data
+        // slot down to the serializer, which rejects it as a slot/type mismatch naming neither the operation
+        // nor what the caller should have done. Type names only; never the data.
+        if (!_eventDataType!.IsInstanceOfType(eventData))
+        {
+            throw new InvalidOperationException(
+                $"'{OperationName}' declares its event data as {_eventDataType.Name} but the raise carried a {eventData.GetType().Name}. " +
+                "A branch that declared an OnEvent continuation runs that continuation, so a raise at it supplies DATA, not a step — " +
+                $"seal it with {nameof(IGovernedStep.SealEventData)} rather than {nameof(IGovernedStep.SealStep)}.");
+        }
+
+        return WorkflowEnvelope.WithEventData(Serializer, stepEnvelope, eventData, typeof(I));
     }
 
     // Guards a *native* business result: the consumer's own orchestrator reads it, so the backend journals it

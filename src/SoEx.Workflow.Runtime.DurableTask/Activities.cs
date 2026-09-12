@@ -3,7 +3,16 @@ using SoEx.Workflow;
 
 namespace SoEx.Workflow.Runtime.DurableTask;
 
-public sealed record StepInput(byte[] Payload, string InstanceId, long Sequence);
+public sealed record StepInput(byte[] Payload, string InstanceId, long Sequence, byte[]? EventData = null)
+{
+    /// <summary>
+    /// Raise-time event data to merge into this dispatch, if any. Normalised to empty rather than null because
+    /// this DTO is journaled: a pre-deploy activity-input history has no such field, and DTFx decodes an
+    /// absent field as null rather than replaying a default — normalising here means <see cref="StepActivity"/>
+    /// and the 4-arg dispatch it calls never have to treat "no field" and "null field" as two different cases.
+    /// </summary>
+    public byte[] EventData { get; init; } = EventData ?? [];
+}
 
 public sealed record TerminateInput(string InstanceId, long Sequence);
 
@@ -53,7 +62,7 @@ public sealed class StepActivity(IGovernedStep step)
         {
             ambient = step.AmbientOf(input.InstanceId, input.Payload);
             step.GuardVisibleName(input.InstanceId, ambient);
-            action = (await step.DispatchGovernedAsync(input.Payload, input.InstanceId, input.Sequence)) as WorkflowAction
+            action = (await step.DispatchGovernedAsync(input.Payload, input.EventData, input.InstanceId, input.Sequence)) as WorkflowAction
                 ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
 
             // Fold in whatever this step enrolled before the flattening below guards or seals anything. Inside

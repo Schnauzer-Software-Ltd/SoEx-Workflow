@@ -159,8 +159,11 @@ Console.WriteLine("Workflow started; waiting for invite-accepted…");
 
 ## Step 5 — Raise the event and finish
 
-The flow is now parked on its `invite-accepted` branch. Raise that event (the payload you raise
-becomes the next step) and await completion:
+The flow is now parked on its `invite-accepted` branch. This branch declared no `OnEvent`, so the flow
+left it to the raiser to say what happens next — the payload you raise becomes the step. (Give a branch an
+`OnEvent` and the flow decides instead, with anything the raise carries arriving as
+[event data](../reference/workflow-action.md#receiving-data-with-an-event).) Raise the event and await
+completion:
 
 ```csharp
 await runtime.RaiseEventAsync(instanceId, "invite-accepted",

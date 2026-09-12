@@ -31,9 +31,20 @@ public sealed class StepMetadataExtractor(IMessageSerializer serializer, Type? c
 
         // The step's DTO type identifies the step kind for the idempotency triple;
         // the type — not its contents — is read.
-        string dtoType = request.Arguments is { Length: > 0 } && request.Arguments[0] is { } arg
-            ? arg.GetType().FullName ?? arg.GetType().Name
-            : request.MethodName;
+        //
+        // An empty slot 0 is refused rather than fallen back on. It means these bytes are not a step at all:
+        // the shape belongs to an event-data seal, which leaves slot 0 for the flow's continuation to fill,
+        // and reaching here means it was raised at a branch that declared no continuation. Falling back to the
+        // operation name would key the step on the operation, dispatch a null DTO, and read exactly like an
+        // ordinary step that chose to do nothing — the quietest possible way to lose a raise.
+        if (request.Arguments is not { Length: > 0 } arguments || arguments[0] is not { } arg)
+        {
+            throw new ArgumentException(
+                $"the envelope for '{request.MethodName}' carries no step DTO — event data can only be raised at a branch whose OnEvent continuation receives it",
+                nameof(payload));
+        }
+
+        string dtoType = arg.GetType().FullName ?? arg.GetType().Name;
 
         return new StepMetadata(instanceId, sequence, dtoType, subjectIds, workflowManaged);
     }

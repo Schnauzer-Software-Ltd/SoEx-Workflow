@@ -20,7 +20,8 @@ public static class MembershipNative
     /// operation, and return the PII-free receipt. The reservation id is the deterministic first reserve.
     /// </summary>
     public static Task<StepReceipt> RunOnboardStep(
-        GovernedStep<Native.IMembershipManager> step, string instanceId, long sequence, string kind, byte[] seed)
+        GovernedStep<Native.IMembershipManager> step, string instanceId, long sequence, string kind, byte[] seed,
+        byte[]? sealedEventData = null)
     {
         OnboardCommand.LookupUser s = step.UnsealStep<OnboardCommand.LookupUser>(instanceId, seed);
         byte[]? ambient = step.AmbientOf(instanceId, seed);
@@ -30,10 +31,14 @@ public static class MembershipNative
             "create" => new OnboardCommand.CreateAccount(s.OrgId, s.Email, s.Offer),
             "reserve" => new OnboardCommand.ReserveSubscription(s.OrgId, s.Email, s.Offer),
             "invite" => new OnboardCommand.SendInvite(s.OrgId, s.Email, s.Offer, "res-1"),
-            "assign" => new OnboardCommand.AssignSubscription("res-1", "confirmed-user"),
+            // A placeholder: at the point the flow reaches "assign" the acceptance may have named someone
+            // else, and if it did the event data overrides this.
+            "assign" => new OnboardCommand.AssignSubscription("res-1", "pending-acceptance"),
             _ => throw new ArgumentException($"unknown onboarding step kind '{kind}'", nameof(kind)),
         };
-        return step.ExecuteAsync<StepReceipt>(new StepContext(instanceId, sequence, ambient), command);
+        // A native flow passes on whatever its wait received; the framework merges it into the step and the
+        // operation's second parameter receives it. Empty on every step that no raise resumed.
+        return step.ExecuteAsync<StepReceipt>(new StepContext(instanceId, sequence, ambient), command, sealedEventData);
     }
 
     /// <summary>

@@ -22,7 +22,9 @@ public abstract record TriggerBase
 
     /// <summary>The invitee accepted the invite. Carries the same <paramref name="Attempt"/> as its start so the
     /// event routes to that run's instance.</summary>
-    public sealed record InviteAccepted(string OrgId, string Email, int Attempt = 0) : TriggerBase;
+    /// <summary><paramref name="ConfirmedUser"/>, when supplied, is who actually accepted — knowable only to
+    /// whoever raises this, so it travels as event data rather than as a step the caller would have to author.</summary>
+    public sealed record InviteAccepted(string OrgId, string Email, int Attempt = 0, string? ConfirmedUser = null) : TriggerBase;
 
     /// <summary>Start the renewal cycle (flow B) for a subscriber.</summary>
     public sealed record StartRenewal(string SubscriberId) : TriggerBase;

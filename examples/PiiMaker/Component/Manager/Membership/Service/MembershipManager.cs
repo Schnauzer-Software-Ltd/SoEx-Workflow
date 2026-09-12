@@ -75,7 +75,17 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
             {
                 string id = DeterministicInstanceId.Keyed(
                     instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
-                await utility.RaiseEventAsync("onboard", id, "invite-accepted");
+                // Bare when nobody was named, data-carrying when someone was. Either way the flow resumes into
+                // the continuation IT declared — the acceptance only says who, never what happens next.
+                if (t.ConfirmedUser is { Length: > 0 } confirmedUser)
+                {
+                    await utility.RaiseEventAsync("onboard", id, "invite-accepted", new InviteAcceptance(confirmedUser));
+                }
+                else
+                {
+                    await utility.RaiseEventAsync("onboard", id, "invite-accepted");
+                }
+
                 return Raised(id);
             }
             case TriggerBase.StartRenewal t:

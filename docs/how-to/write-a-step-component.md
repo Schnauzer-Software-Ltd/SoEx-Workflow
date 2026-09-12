@@ -42,6 +42,23 @@ public interface IOnboardSteps
     Task<StepOutcome> Run(OnboardStep step);   // native: a business result
     // (portable model: Task<WorkflowAction> Run(OnboardStep step); — everything else is identical)
 }
+```
+
+Add a second parameter when a step can be resumed by an event whose raiser knows something you don't —
+who accepted an invite, what amount actually cleared:
+
+```csharp
+Task<StepOutcome> Run(OnboardStep step, InviteAccepted? accepted = null);
+```
+
+It is non-null only on a step that a data-carrying raise resumed into, and only for that dispatch. Those
+are the only two shapes a step operation may have: the step DTO, optionally followed by its event data.
+Anything else is rejected when the host is built rather than when a flow first runs. If a raise carries
+data and your operation has no parameter for it, the instance parks with its key retained rather than
+running as though nothing was sent — extend the component and re-drive it. See
+[Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event).
+
+```csharp
 
 public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
 {

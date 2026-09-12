@@ -130,10 +130,14 @@ prov_zeebe() {
   wait_http http://127.0.0.1:9200 120
   # 8.8 unified config: point secondary storage at ES via camunda.data.secondary-storage.* (the legacy
   # CAMUNDA_DATABASE_URL conflicts with the new property and the broker refuses to start). REST/Operate on 8090.
+  # Authorizations off as well as the unprotected-api flag: the latter covers only the REST API, while the gRPC
+  # gateway on 26500 has its own authorization path and otherwise rejects a resource deploy with
+  # "Command 'CREATE' rejected ... FORBIDDEN" — which reads like a broker fault rather than an auth default.
   ensure_container camunda -- --network piimaker-c8 \
     -e CAMUNDA_DATA_SECONDARYSTORAGE_TYPE=elasticsearch \
     -e CAMUNDA_DATA_SECONDARYSTORAGE_ELASTICSEARCH_URL=http://camunda-es:9200 \
     -e "CAMUNDA_SECURITY_AUTHENTICATION_UNPROTECTED-API=true" \
+    -e CAMUNDA_SECURITY_AUTHORIZATIONS_ENABLED=false \
     -e SERVER_PORT=8090 \
     -p 127.0.0.1:26500:26500 -p 127.0.0.1:8090:8090 "$CAMUNDA_IMG"
   wait_tcp  127.0.0.1 26500 180

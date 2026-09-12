@@ -30,9 +30,14 @@ completion. You don't write it; on InProc it is `WorkflowDriver<I>`.
 `Complete`, `RaiseIntoNext`, `WaitForEvent`, `Delay`, or `Loop`. The framework envelopes the typed
 payloads, so you pass DTOs, not bytes.
 
-**`EventBranch`** — One way a `WaitForEvent` can be resumed: an event name plus the step a bare raise of
-that name resumes into. A wait carries one or more, and they race each other and the wait's timer; the
-first branch declared wins if more than one event is already deliverable.
+**`EventBranch`** — One way a `WaitForEvent` can be resumed: an event name plus the step a raise of that
+name resumes into. A wait carries one or more, and they race each other and the wait's timer; the first
+branch declared wins if more than one event is already deliverable.
+
+**Event data** — What a raiser sends along with an event when the branch already declared what runs next.
+The branch's `OnEvent` step still runs; the data reaches the step operation as a second argument, for that
+one dispatch only. Sealed with `SealEventData`, which is a different seal from the one that supplies a
+step. See [`WorkflowAction`](workflow-action.md#receiving-data-with-an-event).
 
 **No migration** — A native instance and a portable instance have different durable journal/replay
 shapes, so neither driver can replay the other's history. To switch models you start a fresh instance;

@@ -17,3 +17,10 @@ public abstract record OnboardCommand
     public sealed record ReleaseReservation(string ReservationId) : OnboardCommand;
     public sealed record Abandon(string Reason) : OnboardCommand;
 }
+
+/// <summary>
+/// What whoever accepts an invite can tell the flow at raise time. The flow cannot know this when it parks —
+/// an invite may be accepted by someone other than the person it was addressed to — so it is supplied with the
+/// raise and reaches the step as its second argument, rather than the raiser having to author the next step.
+/// </summary>
+public sealed record InviteAcceptance(string ConfirmedUser);

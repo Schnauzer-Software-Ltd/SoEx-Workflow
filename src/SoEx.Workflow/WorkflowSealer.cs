@@ -33,4 +33,26 @@ public sealed class WorkflowSealer(
         keys.Mint(instanceId);
         return keys.Encrypt(instanceId, WorkflowEnvelope.ForStep(serializer, operationName, stepDto, ambientContext, contract));
     }
+
+    /// <summary>
+    /// Wraps raise-time event <i>data</i> into the opaque durable envelope and seals it under the instance
+    /// key. This is the seal for a raiser who wants the flow's own declared continuation to run carrying its
+    /// data — as opposed to <see cref="Seal"/>, which supplies the next step outright and so requires knowing
+    /// what the flow does next. Same key, same tombstone refusal.
+    /// <para>
+    /// Requires the entrypoint contract. The seal checks here, where the raiser can still be told about it,
+    /// that the operation declares a second parameter and that this is the type it declares.
+    /// </para>
+    /// </summary>
+    public byte[] SealEventData(string instanceId, object eventData)
+    {
+        if (tombstone?.IsErased(instanceId) == true)
+        {
+            throw new InvalidOperationException(
+                $"instance '{instanceId}' was erased — refusing to re-mint its key. A raise arriving after the crypto-shred must not resurrect the flow.");
+        }
+
+        keys.Mint(instanceId);
+        return keys.Encrypt(instanceId, WorkflowEnvelope.ForEventData(serializer, operationName, eventData, contract));
+    }
 }

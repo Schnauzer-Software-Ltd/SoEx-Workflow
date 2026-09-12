@@ -16,6 +16,10 @@ public sealed class WorkflowDriver<I>(
     public async Task<byte[]> RunAsync(byte[] seedStep)
     {
         byte[] current = seedStep;
+        // Raise-time event data waiting to be handed to the next dispatch. It belongs to exactly one step —
+        // the continuation the raise resumed — so it is cleared the moment that dispatch returns rather than
+        // travelling on with the flow.
+        byte[] eventData = [];
         long lastSequence = 0;
 
         try
@@ -27,7 +31,8 @@ public sealed class WorkflowDriver<I>(
             {
                 long sequence = runtime.NextSequence();
                 lastSequence = sequence;
-                object? result = await DispatchWithRetryAsync(current, sequence);
+                object? result = await DispatchWithRetryAsync(current, eventData, sequence);
+                eventData = [];
                 WorkflowAction action = result as WorkflowAction
                     ?? throw new InvalidOperationException(
                         $"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
@@ -50,7 +55,7 @@ public sealed class WorkflowDriver<I>(
                         break;
 
                     case WorkflowAction.WaitForEvent wait:
-                        current = await AwaitEventAsync(wait, ambient);
+                        (current, eventData) = await AwaitEventAsync(wait, ambient);
                         break;
 
                     case WorkflowAction.Delay delay:
@@ -90,7 +95,7 @@ public sealed class WorkflowDriver<I>(
     // classified terminal) the exception propagates to RunAsync's catch, which parks the instance. Retry
     // backoff is a real in-execution wait (Task.Delay), not the durable timer — a redelivered step re-enters
     // here fresh, and the step's idempotency (when wired) collapses a re-run that already recorded its effect.
-    private async Task<object?> DispatchWithRetryAsync(byte[] current, long sequence)
+    private async Task<object?> DispatchWithRetryAsync(byte[] current, byte[] eventData, long sequence)
     {
         int attempt = 0;
         while (true)
@@ -98,7 +103,7 @@ public sealed class WorkflowDriver<I>(
             attempt++;
             try
             {
-                return await step.DispatchGovernedAsync(current, runtime.InstanceId, sequence);
+                return await step.DispatchGovernedAsync(current, eventData, runtime.InstanceId, sequence);
             }
             catch (Exception ex) when (_options.ShouldRetry(attempt, ex))
             {
@@ -127,7 +132,8 @@ public sealed class WorkflowDriver<I>(
         return pending;
     }
 
-    private async Task<byte[]> AwaitEventAsync(WorkflowAction.WaitForEvent wait, byte[]? ambient)
+    // Returns the next step to run and the raise-time event data to hand it (empty when there is none).
+    private async Task<(byte[] Step, byte[] EventData)> AwaitEventAsync(WorkflowAction.WaitForEvent wait, byte[]? ambient)
     {
         // EVERY branch name is journaled in clear, so every one is guarded — not just the first.
         string[] names = [.. wait.Branches.Select(b => step.GuardVisibleName(b.EventName, ambient))];
@@ -153,24 +159,39 @@ public sealed class WorkflowDriver<I>(
             }
         }
 
-        return wait.OnTimeout is { } onTimeout
-            ? step.SealStep(runtime.InstanceId, onTimeout, ambient)
-            : throw new InvalidOperationException(
-                $"durable timer elapsed waiting for {string.Join(", ", names.Select(n => $"'{n}'"))} with no OnTimeout step");
-    }
-
-    // An event raised with a payload carries the next step; one raised empty resumes into the continuation
-    // its OWN branch declared (the flow decided at wait time what that bare event means).
-    private byte[] Raised(EventBranch branch, string eventName, byte[] payload, byte[]? ambient)
-    {
-        if (payload is { Length: > 0 })
+        // The timer path carries no event data — nobody raised anything.
+        if (wait.OnTimeout is { } onTimeout)
         {
-            return payload;
+            return (step.SealStep(runtime.InstanceId, onTimeout, ambient), []);
         }
 
-        return branch.OnEvent is { } onEvent
-            ? step.SealStep(runtime.InstanceId, onEvent, ambient)
-            : throw new InvalidOperationException(
-                $"'{eventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
+        throw new InvalidOperationException(
+            $"durable timer elapsed waiting for {string.Join(", ", names.Select(n => $"'{n}'"))} with no OnTimeout step");
+    }
+
+    // The resolution rule for a raise landing on a branch, identical on every adapter.
+    //
+    // A branch that declared an OnEvent always resumes into it — that continuation is the flow's own decision
+    // about what this event means, and a raiser is in no position to overrule it. A payload raised alongside
+    // is carried in as event data instead of replacing the step, which is what lets an outside caller
+    // contribute data without knowing (or being able to construct) the flow's next state. Only a branch that
+    // declared nothing leaves the next step for the raiser to supply.
+    //
+    // Sealing the continuation here rather than returning the payload also means KeyFor and AmbientOf upstream
+    // read the continuation on this path, so the flow's ambient context survives a data-carrying raise.
+    private (byte[] Step, byte[] EventData) Raised(EventBranch branch, string eventName, byte[] payload, byte[]? ambient)
+    {
+        if (branch.OnEvent is { } onEvent)
+        {
+            return (step.SealStep(runtime.InstanceId, onEvent, ambient), payload ?? []);
+        }
+
+        if (payload is { Length: > 0 })
+        {
+            return (payload, []);
+        }
+
+        throw new InvalidOperationException(
+            $"'{eventName}' was raised with an empty payload and its branch of the wait has no OnEvent step");
     }
 }

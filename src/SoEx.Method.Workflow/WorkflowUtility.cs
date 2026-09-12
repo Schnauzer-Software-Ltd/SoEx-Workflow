@@ -61,13 +61,23 @@ public sealed class WorkflowUtility(
         }
     }
 
-    public Task RaiseEventAsync(string flowKey, string instanceId, string eventName)
+    public Task RaiseEventAsync(string flowKey, string instanceId, string eventName, object? eventData = null)
     {
         // The event name is journaled in clear by the backend (signal name / promise key / bookmark) and
         // survives the shred, so reject one carrying a known subject before it reaches the gateway — the
         // raise-side analogue of the step seam's name guard. Subjects come from the still-live subject index.
         RuntimeVisibleName.Require(eventName, index.SubjectsFor(instanceId));
-        return seam.For(flowKey).Gateway.RaiseEventAsync(instanceId, eventName);
+
+        WorkflowSeam.FlowSeam flow = seam.For(flowKey);
+        if (eventData is null)
+        {
+            return flow.Gateway.RaiseEventAsync(instanceId, eventName);
+        }
+
+        // Sealed as event DATA, not as a step: the flow's own continuation still decides what runs next, and
+        // this only supplies what the raiser knows. The seal refuses here if the flow's operation has no
+        // parameter to receive it, so the caller is told at the raise rather than the instance parking later.
+        return flow.Gateway.RaiseEventAsync(instanceId, eventName, flow.Sealer.SealEventData(instanceId, eventData));
     }
 
     public Task<string[]> SubjectsForAsync(string instanceId) =>

@@ -46,11 +46,26 @@ public abstract record WorkflowAction
     /// Park until one of the wait's named events is raised. With a <see cref="WaitForEvent.Timeout"/>, the
     /// events race a durable timer; if the timer wins, the workflow resumes into
     /// <see cref="WaitForEvent.OnTimeout"/> (e.g. a compensation step DTO). Each branch carries its own
-    /// <see cref="EventBranch.OnEvent"/> continuation, so the flow decides at wait time what a bare
-    /// (payload-free) raise of that branch means: a caller can then raise just the instance id + event
-    /// name with no payload (and no flow knowledge) and the driver resumes into that branch's journaled
-    /// continuation; an event raised <i>with</i> a payload still wins, carrying event data into the next
-    /// step as before. The framework envelopes the typed steps — the consumer returns DTOs, not bytes.
+    /// <see cref="EventBranch.OnEvent"/> continuation, so the flow decides at wait time what a raise of
+    /// that branch resumes into and a caller needs nothing but the instance id and the event name — no
+    /// payload, no flow knowledge, no key material. The framework envelopes the typed steps — the consumer
+    /// returns DTOs, not bytes.
+    /// <para>
+    /// How a raise on a branch resolves:
+    /// <list type="table">
+    /// <item><term>OnEvent, raised with data</term><description>the branch's continuation runs, and the
+    /// raised data reaches it as the step operation's second argument.</description></item>
+    /// <item><term>OnEvent, raised bare</term><description>the continuation runs with no event data.</description></item>
+    /// <item><term>no OnEvent, raised with data</term><description>the raised payload <i>is</i> the next step —
+    /// the one case where the raiser has to know the flow well enough to author it.</description></item>
+    /// <item><term>no OnEvent, raised bare</term><description>throws: nothing says what to resume into.</description></item>
+    /// </list>
+    /// A declared continuation is therefore never displaced by a raise; data joins it rather than replacing it.
+    /// The flow's own ambient context travels onto the continuation in every case — event data carries none of
+    /// its own, and a subject learned from it is enrolled through <see cref="WorkflowAction.Subjects"/>. A step
+    /// operation that declares no second parameter but is raised at with data fails loudly rather than dropping
+    /// it: the instance parks with its key retained, to be re-driven once the component can receive the data.
+    /// </para>
     /// <para>
     /// Branch order is significant: it is the tie-break when more than one of the wait's events is
     /// already deliverable at wait time, so the first branch declared wins. That makes the choice
@@ -132,9 +147,11 @@ public abstract record WorkflowAction
 
 /// <summary>
 /// One resumable branch of a <see cref="WorkflowAction.WaitForEvent"/>: the event name that resumes it,
-/// plus the typed step DTO a bare (payload-free) raise of that name resumes into. <paramref name="OnEvent"/>
-/// is sealed and journaled at wait time, so a context-free caller needs nothing but the instance id and the
-/// event name; a raise carrying a payload supplies the next step itself and wins over it.
+/// plus the typed step DTO a raise of that name resumes into. <paramref name="OnEvent"/> is sealed and
+/// journaled at wait time, so a context-free caller needs nothing but the instance id and the event name.
+/// A raise carrying data runs this same continuation and hands the data to the step operation as its second
+/// argument; only a branch that declares no <paramref name="OnEvent"/> lets a raised payload be the next step
+/// itself. See <see cref="WorkflowAction.WaitForEvent"/> for the full table.
 /// </summary>
 public sealed record EventBranch(string EventName, object? OnEvent = null);
 

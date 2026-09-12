@@ -74,10 +74,17 @@ public sealed class ElsaWorkflowGateway(
             Bookmark bookmark = instance.WorkflowState.Bookmarks.FirstOrDefault(b => b.Name == eventName)
                 ?? throw new InvalidOperationException($"instance '{instanceId}' is not waiting on '{eventName}'");
 
-            byte[] payload = ElsaEventPayload.Resolve(bookmark, sealedPayload ?? []);
+            ElsaResume resume = ElsaEventPayload.Resolve(bookmark, sealedPayload ?? []);
             await services.GetRequiredService<IWorkflowResumer>().ResumeAsync(
                 new BookmarkFilter { WorkflowInstanceId = instance.Id, Name = eventName },
-                new ResumeBookmarkOptions { Input = new Dictionary<string, object> { ["payload"] = Convert.ToBase64String(payload) } },
+                new ResumeBookmarkOptions
+                {
+                    Input = new Dictionary<string, object>
+                    {
+                        [WorkflowDriverActivity.PayloadInput] = Convert.ToBase64String(resume.Payload),
+                        [WorkflowDriverActivity.EventDataInput] = Convert.ToBase64String(resume.EventData),
+                    },
+                },
                 default);
             return [];
         }

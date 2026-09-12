@@ -50,9 +50,12 @@ store: the bundled `OpenBaoInstanceKeyStore` or `RavenDbInstanceKeyStore`, or yo
 
 The flattened `ActionDto` a `wait` returns carries the wait's pre-sealed continuations as base64
 fields: `onTimeout` (the step to resume into when the timer wins) and, per branch, `onEvent` (the step
-to resume into when `raise_event` delivers an empty payload at that branch's name, so an external
-caller can raise "this happened" with no flow knowledge). A non-empty raised payload always wins and
-becomes the next step. These fields use the empty string, never JSON `null`, when absent.
+to resume into when `raise_event` delivers a payload at that branch's name, so an external caller can
+raise "this happened" with no flow knowledge). When a branch has an `onEvent` step, that step is
+always next; a non-empty raised payload no longer replaces it — instead it travels alongside as *event
+data*, a separate opaque field the next `/step` call carries and that step alone consumes. A branch
+with no `onEvent` step still resumes straight into the raised payload as before. These fields use the
+empty string, never JSON `null`, when absent.
 
 A wait carries a `branches` array, each entry an `{eventName, onEvent}` pair, in the order the flow
 declared them. The sidecar parks a durable promise per branch and races them against the wait's timer,
@@ -71,6 +74,12 @@ resend button, say) delivers only its first raise. A flow that needs a repeatabl
 **Version handshake.** The sidecar sends its `WIRE_VERSION` on every `/step`/`/terminate` call in the
 `x-soex-wire-version` header, and the .NET host refuses a mismatch with `400` — so a stale sidecar binary no
 longer silently runs an old contract; it fails loudly instead. Keep the two constants in lock-step.
+
+**Wire version 3** added `StepRequest.eventData`: the raised payload when a wait resumes into a
+branch's `onEvent` step, carried separately instead of replacing it (see above). The field is always
+present on the wire — an empty string, never an absent or `null` one, when a step carries no event
+data. Event data reaches exactly the one `/step` call that follows the raise and is cleared after; it
+does not survive a `Loop`'s continue-as-new, and the on-timeout path never carries it.
 
 **Timeouts and supervision.** The sidecar's callbacks to the host carry a request timeout (`STEP_TIMEOUT_SECS`,
 default 60s) so a hung host does not hang the invocation — the call fails and Restate's own retry drives it.

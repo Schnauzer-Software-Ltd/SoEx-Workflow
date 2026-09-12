@@ -32,6 +32,16 @@ public sealed class WorkflowDriverActivity : Activity
     /// <summary>The workflow input carrying the base64 sealed seed when <see cref="Seed"/> is not supplied.</summary>
     public const string SeedInput = "seed";
 
+    /// <summary>The resume input carrying the next sealed step (base64).</summary>
+    public const string PayloadInput = "payload";
+
+    /// <summary>
+    /// The resume input carrying the sealed raise-time event data (base64), absent on a bare raise and on
+    /// every timer resume. Kept a separate input from <see cref="PayloadInput"/> because the two are separate
+    /// seals with separate meanings: one is the step to run, the other is data for it.
+    /// </summary>
+    public const string EventDataInput = "eventData";
+
     /// <summary>The workflow variable the completed (PII-free) result is published to, for a registered definition.</summary>
     public const string ResultVariable = "soex:result";
 
@@ -74,14 +84,15 @@ public sealed class WorkflowDriverActivity : Activity
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        await DriveAsync(context, Resolve(context), Seed ?? DecodeInput(context, SeedInput));
+        await DriveAsync(context, Resolve(context), Seed ?? DecodeInput(context, SeedInput), []);
     }
 
-    private async ValueTask DriveAsync(ActivityExecutionContext context, Bound bound, byte[] current)
+    private async ValueTask DriveAsync(
+        ActivityExecutionContext context, Bound bound, byte[] current, byte[] eventData)
     {
         try
         {
-            await StepLoopAsync(context, bound, current);
+            await StepLoopAsync(context, bound, current, eventData);
         }
         catch (Exception error)
         {
@@ -97,7 +108,8 @@ public sealed class WorkflowDriverActivity : Activity
         }
     }
 
-    private async ValueTask StepLoopAsync(ActivityExecutionContext context, Bound bound, byte[] current)
+    private async ValueTask StepLoopAsync(
+        ActivityExecutionContext context, Bound bound, byte[] current, byte[] eventData)
     {
         (IGovernedStep step, _, string sagaInstanceId) = bound;
 
@@ -109,7 +121,11 @@ public sealed class WorkflowDriverActivity : Activity
             WorkflowAction action;
             try
             {
-                action = await DispatchWithRetryAsync(bound, current, seq);
+                action = await DispatchWithRetryAsync(bound, current, eventData, seq);
+
+                // The raise that resumed this activity feeds exactly the one step it resumed into; clear it
+                // before the loop continues so it cannot travel on to a later step of the same run.
+                eventData = [];
 
                 // Fold in whatever this step enrolled before the switch below guards or seals anything. Inside
                 // the try, so a rejected enrollment is scrubbed rather than persisted by Elsa in clear.
@@ -199,7 +215,7 @@ public sealed class WorkflowDriverActivity : Activity
     // terminal) the exception propagates to the journal-safety scrub and then to DriveAsync's catch, which
     // parks the instance. Retry backoff is a real in-execution wait; a redelivered activity re-enters fresh,
     // and the step's idempotency (when wired) collapses a re-run that already recorded its effect.
-    private async ValueTask<WorkflowAction> DispatchWithRetryAsync(Bound bound, byte[] current, long seq)
+    private async ValueTask<WorkflowAction> DispatchWithRetryAsync(Bound bound, byte[] current, byte[] eventData, long seq)
     {
         int attempt = 0;
         while (true)
@@ -207,7 +223,7 @@ public sealed class WorkflowDriverActivity : Activity
             attempt++;
             try
             {
-                return (await bound.Step.DispatchGovernedAsync(current, bound.SagaInstanceId, seq)) as WorkflowAction
+                return (await bound.Step.DispatchGovernedAsync(current, eventData, bound.SagaInstanceId, seq)) as WorkflowAction
                     ?? throw new InvalidOperationException($"the '{bound.Step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
             }
             catch (Exception ex) when (Options.ShouldRetry(attempt, ex))
@@ -250,6 +266,6 @@ public sealed class WorkflowDriverActivity : Activity
             _sequence = sequence;
         }
 
-        await DriveAsync(context, Resolve(context), DecodeInput(context, "payload"));
+        await DriveAsync(context, Resolve(context), DecodeInput(context, PayloadInput), DecodeInput(context, EventDataInput));
     }
 }

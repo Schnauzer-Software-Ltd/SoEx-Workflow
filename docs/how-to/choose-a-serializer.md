@@ -37,6 +37,8 @@ flow have none, because the declared type there is `object`:
 - The ambient context bag, which carries the subject stop as a dictionary value on every governed step.
 - The portable `WorkflowAction`, whose `Complete.Result`, `RaiseIntoNext.NextStep`, `Loop.CarryState`,
   `WaitForEvent.OnTimeout` and `EventBranch.OnEvent` members hold your step DTOs.
+- The event-data argument, if your step operation declares one. It rides the same envelope slot rule as the
+  step DTO, so a closed-hierarchy event type needs its variants registered just as a step hierarchy does.
 
 The framework half of that list is `WorkflowKnownTypes.Framework`. The other half is your own step DTOs,
 which the framework cannot know. Where a step DTO is a closed hierarchy — one base declared on the

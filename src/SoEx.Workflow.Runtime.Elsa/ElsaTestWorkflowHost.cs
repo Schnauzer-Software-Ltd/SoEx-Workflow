@@ -69,13 +69,13 @@ public sealed class ElsaTestWorkflowHost
             }
 
             Bookmark target;
-            byte[] payload;
+            ElsaResume resume;
 
             Bookmark? bookmark = bookmarks.FirstOrDefault(b => prearmed.ContainsKey(b.Name));
             if (bookmark is not null)
             {
                 target = bookmark;
-                payload = ElsaEventPayload.Resolve(bookmark, prearmed[bookmark.Name]);
+                resume = ElsaEventPayload.Resolve(bookmark, prearmed[bookmark.Name]);
             }
             else
             {
@@ -87,15 +87,22 @@ public sealed class ElsaTestWorkflowHost
 
                 await advanceGate.Task;   // the durable timer fires when the test advances time
                 target = timer;
-                payload = timer.Metadata is { } md && md.TryGetValue("onTimeout", out string? onTimeout) && !string.IsNullOrEmpty(onTimeout)
-                    ? Convert.FromBase64String(onTimeout)
-                    : [];
+                // A timer resume carries no event data — nobody raised anything.
+                resume = new ElsaResume(
+                    timer.Metadata is { } md && md.TryGetValue("onTimeout", out string? onTimeout) && !string.IsNullOrEmpty(onTimeout)
+                        ? Convert.FromBase64String(onTimeout)
+                        : [],
+                    []);
             }
 
             result = await runner.RunAsync(workflow, result.WorkflowState, new RunWorkflowOptions
             {
                 BookmarkId = target.Id,
-                Input = new Dictionary<string, object> { ["payload"] = Convert.ToBase64String(payload) },
+                Input = new Dictionary<string, object>
+                {
+                    [WorkflowDriverActivity.PayloadInput] = Convert.ToBase64String(resume.Payload),
+                    [WorkflowDriverActivity.EventDataInput] = Convert.ToBase64String(resume.EventData),
+                },
             });
             ThrowIfFaulted(result);
         }

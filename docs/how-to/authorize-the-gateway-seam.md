@@ -50,7 +50,7 @@ distributing the secret to every caller; where that's impossible, the unkeyed `F
 
 ## What the framework guarantees regardless
 
-One protection is cryptographic rather than access control: a payload-carrying continuation is sealed
+One protection is cryptographic rather than access control: whatever a raise carries is sealed
 under the per-instance key with the instance id bound in as associated data, so a forged or
 cross-instance payload fails at decrypt. A bare (payloadless) event carries no such proof, which is
 another reason to keep auth in front of it.

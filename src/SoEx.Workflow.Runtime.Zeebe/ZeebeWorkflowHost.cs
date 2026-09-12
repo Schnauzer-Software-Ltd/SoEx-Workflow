@@ -123,6 +123,30 @@ public static class ZeebeWorkflowHost
         IGovernedStep step,
         Func<string, long, string, byte[], Task<object?>> run,
         string? workerName = null) =>
+        OpenStepWorker(client, jobType, step, (id, key, kind, seed, _) => run(id, key, kind, seed), workerName);
+
+    /// <summary>
+    /// As the overload above, for a step that receives raise-time <b>event data</b>. The extra
+    /// <c>byte[]</c> the <paramref name="run"/> delegate takes is the sealed data a raise carried, empty
+    /// when there was none.
+    /// <para>
+    /// It is opt-in per service task, by the <c>eventVariable</c> task header naming the process variable
+    /// that holds it — <c>__event</c> for the gateway's own raises. That is deliberate rather than automatic:
+    /// a Zeebe process variable persists in its flow scope once set, so a worker that forwarded <c>__event</c>
+    /// unconditionally would keep handing the same stale raise to every later step in the scope, each of them
+    /// unable to tell it from a fresh one. Naming it on exactly the task that follows the catch event keeps
+    /// the data where it belongs. Clearing the variable afterwards is BPMN modelling (an output mapping that
+    /// overwrites it), not something the framework can do from here.
+    /// </para>
+    /// <para>A named variable that is absent reads as empty — the same task resumed by a bare raise. A named
+    /// variable holding anything but a base64 string is a modelling error and raises a PII-free incident.</para>
+    /// </summary>
+    public static IJobWorker OpenStepWorker(
+        IZeebeClient client,
+        string jobType,
+        IGovernedStep step,
+        Func<string, long, string, byte[], byte[], Task<object?>> run,
+        string? workerName = null) =>
         client.NewWorker()
             .JobType(jobType)
             .Handler(async (jobClient, job) =>
@@ -176,9 +200,18 @@ public static class ZeebeWorkflowHost
     /// completed, or a PII-free incident message when it should be failed. Broker-free so the guard chokepoint
     /// and the idempotency keying are unit-testable.
     /// </summary>
+    internal static Task<string?> ExecuteStepJob(
+        IGovernedStep step, string variablesJson, string headersJson, long elementInstanceKey, string jobDesc,
+        Func<string, long, string, byte[], Task<object?>> run) =>
+        ExecuteStepJob(
+            step, variablesJson, headersJson, elementInstanceKey, jobDesc,
+            (id, key, kind, seed, _) => run(id, key, kind, seed));
+
+    /// <summary>As above, for a step that also receives the raise-time event data named by the
+    /// <c>eventVariable</c> task header (empty when the header is absent).</summary>
     internal static async Task<string?> ExecuteStepJob(
         IGovernedStep step, string variablesJson, string headersJson, long elementInstanceKey, string jobDesc,
-        Func<string, long, string, byte[], Task<object?>> run)
+        Func<string, long, string, byte[], byte[], Task<object?>> run)
     {
         byte[]? ambient = null;
         string? instanceId = null;   // hoisted so the catch can scrub against the index even if a later parse throws
@@ -200,7 +233,8 @@ public static class ZeebeWorkflowHost
             // iteration applies its effect once while a retried iteration dedupes on the same key. A static
             // header would make every iteration collide on (instanceId, DtoType, seq) and silently absorb
             // iterations 2+. Zeebe keys are globally unique, so this also separates continue-as-new generations.
-            object? result = await run(instanceId, elementInstanceKey, kind, seed);
+            object? result = await run(
+                instanceId, elementInstanceKey, kind, seed, EventDataFrom(variablesJson, headersJson, jobDesc));
 
             // The step receipt is journaled in clear (escapes the shred), so enforce it is PII-free — the same
             // guard every adapter applies to a returned result. The receipt is not written back: it carries no
@@ -293,6 +327,41 @@ public static class ZeebeWorkflowHost
         {
             return "governed job failed; detail withheld to keep the incident PII-free";
         }
+    }
+
+    /// <summary>The task header a service task opts into raise-time event data with, naming the process
+    /// variable that carries it.</summary>
+    public const string EventVariableHeader = "eventVariable";
+
+    /// <summary>
+    /// The sealed event data for this job: empty unless the task declares the <see cref="EventVariableHeader"/>
+    /// header, in which case it is the named process variable's base64 content (empty when that variable is not
+    /// set — the same task reached by a bare raise).
+    /// </summary>
+    private static byte[] EventDataFrom(string variablesJson, string headersJson, string jobDesc)
+    {
+        Dictionary<string, string> headers =
+            JsonSerializer.Deserialize<Dictionary<string, string>>(headersJson, Json) ?? new();
+        if (!headers.TryGetValue(EventVariableHeader, out string? variableName) || string.IsNullOrEmpty(variableName))
+        {
+            return [];
+        }
+
+        using JsonDocument variables = JsonDocument.Parse(variablesJson);
+        if (!variables.RootElement.TryGetProperty(variableName, out JsonElement value))
+        {
+            return [];
+        }
+
+        // The value, never quoted back — it is the sealed raise, and an incident message is journaled in clear.
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidOperationException(
+                $"{jobDesc} names '{variableName}' as its event variable, but that process variable is {value.ValueKind}, not a base64 string");
+        }
+
+        string encoded = value.GetString() ?? "";
+        return encoded.Length == 0 ? [] : Convert.FromBase64String(encoded);
     }
 
     /// <summary>Reads a required custom task header, throwing (→ a PII-free incident) if it is missing or empty

@@ -63,8 +63,16 @@ A bare "this happened" raise carries no payload, so how does the flow know what 
 can pre-decide: each branch of a `WaitForEvent` carries an `OnEvent` continuation (the branch-level twin
 of `OnTimeout`), sealed at wait time and journaled. The bare raise then resumes the wait into the step
 that branch pre-sealed. This is what lets a webhook raise an event at a flow with no flow knowledge and
-no key material at all. An event raised with a sealed payload still wins and becomes the next step, so
-data-carrying events keep working.
+no key material at all.
+
+Data-carrying events work differently from how you might expect, and deliberately so. A raise that carries
+data does not replace the branch's continuation — it runs alongside it, reaching the step operation as a
+second argument. The division is: the flow decides *what happens next*, because only the flow knows its own
+state; the raiser supplies *what it knows*, because only the raiser knows that. Letting a payload become the
+next step would require the outside world to construct the flow's internal state, which is possible for a
+simple saga and impossible once that state is something like a statechart snapshot. A branch that declares
+no continuation still accepts a payload as the next step, for the cases where the raiser genuinely is the
+one deciding.
 
 A wait can name several events, each with its own continuation, all racing the timer. That matters for
 the seam because callers are usually different systems: an identity provider confirming a verification
@@ -81,11 +89,11 @@ and raise on every adapter consults it first. That turns "enforce auth somewhere
 auth in exactly one place", which is far easier to get right. The authorizer runs where the gateway
 runs, so you still front the ingress at your edge; this is defense in depth.
 
-Cryptographic integrity is something the framework can guarantee, and does: a payload-carrying
-continuation is sealed under the per-instance key with the instance id bound in as associated data
-(AAD). A payload forged for one instance, or replayed against another, fails at decrypt, because the AAD
-bind makes the ciphertext inseparable from its instance. A bare (payloadless) event carries no such
-proof, which is why authorization in front of it matters.
+Cryptographic integrity is something the framework can guarantee, and does: anything a raise carries —
+a continuation or event data — is sealed under the per-instance key with the instance id bound in as
+associated data (AAD). A payload forged for one instance, or replayed against another, fails at decrypt,
+because the AAD bind makes the ciphertext inseparable from its instance. A bare (payloadless) event carries
+no such proof, which is why authorization in front of it matters.
 
 ## See also
 

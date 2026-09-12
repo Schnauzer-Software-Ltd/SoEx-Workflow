@@ -28,8 +28,10 @@ public GovernedStep<I>(
 
 | Member | Description |
 |---|---|
-| `Task<T> ExecuteAsync<T>(StepContext context, object stepDto)` | Dispatch one governed step; returns the component's typed result `T`. |
+| `Task<T> ExecuteAsync<T>(StepContext context, object stepDto, byte[]? sealedEventData = null)` | Dispatch one governed step; returns the component's typed result `T`. A native flow that awaited an event passes the sealed data it received, and the step operation's second parameter receives it. |
 | `byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null)` | Mint the key (on first use) and seal a step DTO under it. Returns the sealed seed/payload. |
+| `byte[] SealEventData(string instanceId, object eventData)` | Mint the key and seal raise-time event *data* under it — the form a raiser uses to feed the flow's own declared continuation rather than to supply the next step. Refused unless the step operation declares a parameter to receive it. |
+| `bool AcceptsEventData` | Whether the step operation declares that second parameter. |
 | `T UnsealStep<T>(string instanceId, byte[] sealed)` | Decrypt a sealed payload back to a typed DTO (key must be live). |
 | `byte[] AmbientOf(string instanceId, byte[] sealed)` | Recover the ambient bytes from a sealed payload (throws `InvalidOperationException` once the key is shredded). |
 | `byte[]? EnrollSubjects(string instanceId, byte[]? ambient, WorkflowAction action)` | Fold the subjects an action declared into the step's context: index them now, and return the ambient every continuation is then sealed with. Portable drivers call this after the step returns and before guarding or flattening. See [`WorkflowAction`](workflow-action.md#enrolling-a-subject-the-step-learned). |
@@ -39,9 +41,13 @@ public GovernedStep<I>(
 single-operation contract. `subjectMatcher` overrides the clear-text guard — see
 [Customize PII detection](../how-to/customize-pii-detection.md).
 
+A step operation takes its step DTO, optionally followed by the event data a raise may carry. Any other
+parameter count is rejected when the `GovernedStep` is built rather than on the first step of a live
+instance: the framework constructs the argument array itself and has nothing to put in a third slot.
+
 `GovernedStep<I>` also exposes a non-generic `IGovernedStep` facet (instance id / result / visible-name
-guards, `SealStep`, `AmbientOf`, `EnrollSubjects`, `Serializer`). This is the type the shipped host builders accept, so a
-host that drives several entrypoints can hold them uniformly.
+guards, `SealStep`, `SealEventData`, `AmbientOf`, `EnrollSubjects`, `Serializer`). This is the type the shipped
+host builders accept, so a host that drives several entrypoints can hold them uniformly.
 
 **Guard scope.** The default substring matcher catches a known subject id appearing literally in a
 runtime-visible name or a serialized result. It is a safety net rather than general PII detection: the

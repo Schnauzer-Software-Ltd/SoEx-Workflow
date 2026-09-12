@@ -57,16 +57,27 @@ async fn resolve_once(ctx: &SharedWorkflowContext<'_>, name: String, payload: St
     Ok(())
 }
 
-/// Pick the envelope to resume a wait into, or fail descriptively when there is none: `primary` (the raised
-/// payload, or the on-timeout step) wins if non-empty, else `fallback` (the on-event step) if non-empty, else
-/// a terminal error — so an empty resume does not continue with an empty envelope that fails later at decrypt.
-fn resume_or_fail(primary: String, fallback: String, event_name: &str, what: &str) -> Result<String, HandlerError> {
-    if !primary.is_empty() {
-        Ok(primary)
-    } else if !fallback.is_empty() {
-        Ok(fallback)
+/// Resolve what a wait resumes into once a branch's promise settles, merging the branch's pre-sealed
+/// `on_event` continuation with any payload the raiser sent. Returns `(next step payload, event data)`;
+/// event data is opaque to the sidecar, exactly like `payload`, and travels to exactly one following
+/// `/step` call (the caller clears it after that call). Mirrors the library sidecar's `resolve_resume`:
+///
+/// | branch has `on_event` | raise payload | next step   | event data |
+/// |---|---|---|---|
+/// | yes | non-empty | `on_event`  | the payload |
+/// | yes | empty     | `on_event`  | none |
+/// | no  | non-empty | the payload | none |
+/// | no  | empty     | — (terminal error: nothing to resume into) |
+fn resolve_resume(resolved: String, on_event: String, event_name: &str) -> Result<(String, String), HandlerError> {
+    if !on_event.is_empty() {
+        Ok((on_event, resolved))
+    } else if !resolved.is_empty() {
+        Ok((resolved, String::new()))
     } else {
-        Err(TerminalError::new(format!("'{event_name}' {what}")).into())
+        Err(TerminalError::new(format!(
+            "'{event_name}' was raised with an empty payload and its branch of the wait has no on-event step"
+        ))
+        .into())
     }
 }
 
@@ -82,12 +93,17 @@ struct RaiseEvent {
 // ===========================================================================================
 
 /// Request to the .NET step host `/step`. camelCase to match the ASP.NET minimal-API binder.
+///
+/// `event_data` is ALWAYS present (never omitted, never `null`) — an empty string when a step carries
+/// none. It must stay a plain `String`, not `Option<String>`: a nullable/absent field here decodes as a
+/// type error on the .NET side and fails every action's invocation, not just the one that omitted it.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StepRequest {
     payload: String,
     instance_id: String,
     sequence: i64,
+    event_data: String,
 }
 
 /// Request to the .NET step host `/terminate` (the termination erasure lifecycle).
@@ -103,7 +119,11 @@ struct TerminateRequest {
 /// The wire-contract version this sidecar speaks, sent on every portable callback so the .NET host can
 /// refuse a stale binary running an old contract. Must match `RestateWorkflowHost.WireVersion`; bump both
 /// in lock-step on any breaking change to the /step or /terminate shapes.
-const WIRE_VERSION: &str = "2";
+///
+/// Version 3 added `StepRequest.event_data` (always-present, empty-string-when-absent): a wait resumed
+/// into a branch's `on_event` step now carries the raiser's non-empty payload separately as event data
+/// instead of discarding it. See `resolve_resume`.
+const WIRE_VERSION: &str = "3";
 const WIRE_VERSION_HEADER: &str = "x-soex-wire-version";
 
 /// One branch of a `wait`: the event name that resumes it, plus that branch's pre-sealed on-event step
@@ -183,9 +203,13 @@ impl MembershipPortable for MembershipPortableImpl {
         // keeps the idempotency key (InstanceId, DtoType, Sequence) unique across generations; a first run
         // (no suffix) starts at 0.
         let mut sequence: i64 = exec_key.split('~').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        // The raiser's payload when a wait resumed into a branch's on-event step (see `resolve_resume`);
+        // empty otherwise. Carried to exactly the next `/step` call, then cleared — one dispatch only. Never
+        // crosses a continue-as-new boundary: the next generation's run() starts its own at "".
+        let mut event_data = String::new();
 
         loop {
-            let req = StepRequest { payload: current.clone(), instance_id: instance_id.clone(), sequence };
+            let req = StepRequest { payload: current.clone(), instance_id: instance_id.clone(), sequence, event_data: event_data.clone() };
             let (client, url, token) = (self.client.clone(), self.step_url.clone(), self.token.clone());
             let dto: ActionDto = ctx
                 .run(|| async move {
@@ -203,6 +227,7 @@ impl MembershipPortable for MembershipPortableImpl {
                 .await?
                 .into_inner();
             sequence += 1;
+            event_data = String::new(); // consumed by exactly the /step call above
 
             match dto.kind.as_str() {
                 "complete" => {
@@ -248,9 +273,12 @@ impl MembershipPortable for MembershipPortableImpl {
                     current = if winner < promises.len() {
                         let branch = branches[winner].clone();
                         let resolved = promises.swap_remove(winner).await?;
-                        // an empty raise resumes into THAT branch's pre-sealed on-event step; a payload wins
-                        resume_or_fail(resolved, branch.on_event.clone(), &branch.event_name,
-                            "was raised with an empty payload and its branch of the wait has no on-event step")?
+                        // A raised branch resumes into that branch's pre-sealed on-event step when it has
+                        // one, carrying any non-empty payload separately as event data; with no on-event
+                        // step the payload becomes the next step itself.
+                        let (next, data) = resolve_resume(resolved, branch.on_event.clone(), &branch.event_name)?;
+                        event_data = data;
+                        next
                     } else {
                         // Await the winner even when it is the timer: select() reports WHICH future
                         // completed, and the SDK's own combinators then await it to consume the completion.
@@ -260,6 +288,7 @@ impl MembershipPortable for MembershipPortableImpl {
                                 "durable timer elapsed waiting for {} with no on-timeout step", quoted_names(&branches))).into());
                         }
 
+                        // on-timeout never carries event data (only a raised event can).
                         dto.on_timeout.clone()
                     };
                 }
@@ -490,4 +519,38 @@ async fn main() {
     )
     .listen_and_serve(bind.parse().expect("invalid BIND address"))
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- resolve_resume: the merged on-event/event-data resolution table. Mirrors the coverage in the
+    // library sidecar (src/SoEx.Workflow.Runtime.Restate/restate-sidecar-rs) for the same logic. ---------
+
+    #[test]
+    fn on_event_branch_with_a_non_empty_raise_resumes_into_on_event_carrying_the_payload_as_event_data() {
+        let (next, data) = resolve_resume("raised".into(), "onevent".into(), "e").unwrap();
+        assert_eq!(next, "onevent");
+        assert_eq!(data, "raised");
+    }
+
+    #[test]
+    fn on_event_branch_with_an_empty_raise_resumes_into_on_event_with_no_event_data() {
+        let (next, data) = resolve_resume(String::new(), "onevent".into(), "e").unwrap();
+        assert_eq!(next, "onevent");
+        assert_eq!(data, "");
+    }
+
+    #[test]
+    fn no_on_event_branch_with_a_non_empty_raise_resumes_into_the_payload_with_no_event_data() {
+        let (next, data) = resolve_resume("raised".into(), String::new(), "e").unwrap();
+        assert_eq!(next, "raised");
+        assert_eq!(data, "");
+    }
+
+    #[test]
+    fn no_on_event_branch_with_an_empty_raise_fails_descriptively() {
+        assert!(resolve_resume(String::new(), String::new(), "invite-accepted").is_err());
+    }
 }

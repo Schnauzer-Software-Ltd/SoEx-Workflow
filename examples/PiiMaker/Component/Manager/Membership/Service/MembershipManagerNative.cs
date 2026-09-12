@@ -18,7 +18,7 @@ public sealed partial class MembershipManager : Interface.Native.IMembershipMana
 {
     // ---- Flow A: onboarding — native single step -------------------------------------------------
 
-    async Task<StepReceipt> Interface.Native.IMembershipManager.Onboard(OnboardCommand command)
+    async Task<StepReceipt> Interface.Native.IMembershipManager.Onboard(OnboardCommand command, InviteAcceptance? accepted)
     {
         switch (command)
         {
@@ -39,8 +39,13 @@ public sealed partial class MembershipManager : Interface.Native.IMembershipMana
             case OnboardCommand.SendInvite:
                 return new StepReceipt("SendInvite");
             case OnboardCommand.AssignSubscription c:
-                await Proxy.ForComponent<ISubscriptionEngine>(this).AssignAsync(c.ReservationId, c.ConfirmedUser);
-                return new StepReceipt("AssignSubscription");
+            {
+                // Whoever accepted the invite is knowable only at raise time; the command's own value is the
+                // placeholder the flow sealed before anyone had accepted.
+                string confirmedUser = accepted?.ConfirmedUser ?? c.ConfirmedUser;
+                await Proxy.ForComponent<ISubscriptionEngine>(this).AssignAsync(c.ReservationId, confirmedUser);
+                return new StepReceipt("AssignSubscription", confirmedUser);
+            }
             case OnboardCommand.ReleaseReservation c:
                 await Proxy.ForComponent<ISubscriptionEngine>(this).ReleaseAsync(c.ReservationId);
                 return new StepReceipt("ReleaseReservation");

@@ -83,7 +83,8 @@ internal class Program
                 // A's governed steps: each kind is a named activity calling the governed OnboardStep (closure over
                 // onboardStep). The seed rides sealed; the subject is recovered through the framework in the activity.
                 StepReceipt Onboard(string kind, SealedStep c) =>
-                    MembershipNative.RunOnboardStep(onboardStep, c.InstanceId, c.Seq, kind, c.Seed).GetAwaiter().GetResult();
+                    MembershipNative.RunOnboardStep(onboardStep, c.InstanceId, c.Seq, kind, c.Seed, c.EventData)
+                        .GetAwaiter().GetResult();
                 tasks.AddActivityFunc<SealedStep, StepReceipt>("Lookup", (_, c) => Onboard("lookup", c));
                 tasks.AddActivityFunc<SealedStep, StepReceipt>("Create", (_, c) => Onboard("create", c));
                 tasks.AddActivityFunc<SealedStep, StepReceipt>("Reserve", (_, c) => Onboard("reserve", c));

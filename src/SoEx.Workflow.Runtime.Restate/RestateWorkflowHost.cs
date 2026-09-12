@@ -25,7 +25,17 @@ namespace SoEx.Workflow.Runtime.Restate;
 /// </summary>
 public static class RestateWorkflowHost
 {
-    public sealed record StepRequest(byte[] Payload, string InstanceId, long Sequence);
+    public sealed record StepRequest(byte[] Payload, string InstanceId, long Sequence, byte[]? EventData = null)
+    {
+        /// <summary>
+        /// The raise-time event data for this step, empty when the raise carried none. Normalised away from
+        /// null for the same reason <see cref="ActionDto.Branches"/> is: this shape crosses a language
+        /// boundary, and the contract on that wire is that an absent value is the empty form, never JSON
+        /// <c>null</c>. The sidecar always sends the key (as <c>""</c>), so a null here means a caller that
+        /// is not the sidecar.
+        /// </summary>
+        public byte[] EventData { get; init; } = EventData ?? [];
+    }
 
     public sealed record TerminateRequest(string InstanceId, long Sequence);
 
@@ -52,7 +62,7 @@ public static class RestateWorkflowHost
     /// silently run an old contract. Bump it on any breaking change to the <c>/step</c>/<c>/terminate</c> shapes,
     /// and rebuild the sidecar in lock-step.
     /// </summary>
-    public const string WireVersion = "2";
+    public const string WireVersion = "3";
 
     /// <summary>The header the sidecar carries its <see cref="WireVersion"/> in.</summary>
     public const string WireVersionHeader = "x-soex-wire-version";
@@ -131,7 +141,7 @@ public static class RestateWorkflowHost
             {
                 ambient = step.AmbientOf(req.InstanceId, req.Payload);
                 step.GuardVisibleName(req.InstanceId, ambient);
-                action = (await step.DispatchGovernedAsync(req.Payload, req.InstanceId, req.Sequence)) as WorkflowAction
+                action = (await step.DispatchGovernedAsync(req.Payload, req.EventData, req.InstanceId, req.Sequence)) as WorkflowAction
                     ?? throw new InvalidOperationException($"the '{step.OperationName}' operation did not return a {nameof(WorkflowAction)}");
 
                 // Fold in whatever this step enrolled before Flatten guards or seals anything below. Inside the

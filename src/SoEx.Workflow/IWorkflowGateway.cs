@@ -18,10 +18,17 @@ public interface IWorkflowGateway
     Task StartAsync(string instanceId, byte[] sealedSeed);
 
     /// <summary>
-    /// Raises a named event at an instance. With a <paramref name="sealedPayload"/>, the
-    /// payload becomes the next step (today's data-carrying semantics). With none, the
-    /// driver resumes into the wait's journaled <c>OnEvent</c> continuation — so the caller
-    /// needs no flow knowledge and no key material.
+    /// Raises a named event at an instance. With no <paramref name="sealedPayload"/> the driver resumes
+    /// into the wait branch's journaled <c>OnEvent</c> continuation, so the caller needs no flow knowledge
+    /// and no key material.
+    /// <para>
+    /// With a payload it depends on what the branch declared. If it declared an <c>OnEvent</c>, that
+    /// continuation still runs and the payload reaches the step operation as its second argument — seal it
+    /// with <see cref="WorkflowSealer.SealEventData"/>, which is the form that says "data for the flow's own
+    /// next step". If it declared none, the payload <i>is</i> the next step — seal it with
+    /// <see cref="WorkflowSealer.Seal"/>. The two are not interchangeable: each is refused on the other's
+    /// path rather than being quietly reinterpreted.
+    /// </para>
     /// <para>
     /// <paramref name="raiseId"/> opts the raise into idempotency: a re-raise carrying the <b>same</b>
     /// id at the same instance is a no-op (the driver records handled ids in its per-instance state), so
