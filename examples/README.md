@@ -17,6 +17,13 @@ hardcoded script.
 > Built as its own solution (`SoEx.Workflow.Examples.sln`) so the shipped library build
 > (`../SoEx.Workflow.sln`) stays clean.
 
+## Other examples
+
+- [**Statechart**](Statechart/README.md) — a chart drawn in a statechart tool, exported as XState v6 JSON and
+  run as a governed workflow. Console, no backend: `dotnet run --project examples/Statechart`.
+- **MultiManager** — two business managers on one workflow utility, and right-to-erasure routed to the owning
+  manager per instance. Console, no backend: `dotnet run --project examples/MultiManager`.
+
 ## Running — the web control panel
 
 Start any host and open its page; pick the host from the in-page dropdown (it can drive any host

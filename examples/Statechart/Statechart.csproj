@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>StatechartDemo</RootNamespace>
+    <AssemblyName>StatechartDemo</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The chart ships WITH the assembly. An embedded resource is the safest home for it: every worker
+       loads byte-identical bytes and a deploy cannot skew one node's copy against another's. -->
+  <ItemGroup>
+    <EmbeddedResource Include="approval.chart.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SoEx.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SoEx.Workflow\SoEx.Workflow.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Workflow.Statecharts\SoEx.Workflow.Statecharts.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Workflow.Runtime.InMemory\SoEx.Workflow.Runtime.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\SoEx.Transport.Workflow\SoEx.Transport.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

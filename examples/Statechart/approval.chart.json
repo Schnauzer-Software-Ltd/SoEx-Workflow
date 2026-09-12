@@ -1,0 +1,24 @@
+{
+  "id": "expense-approval",
+  "version": "1.0.0",
+  "initial": "submitted",
+  "context": { "approver": null },
+  "states": {
+    "submitted": {
+      "on": {
+        "approve": { "target": "approved", "actions": "notifyApproved" },
+        "reject": { "target": "rejected", "actions": "notifyRejected" }
+      },
+      "after": { "2000": { "target": "escalated" } }
+    },
+    "escalated": {
+      "entry": "notifyEscalated",
+      "on": {
+        "approve": { "target": "approved", "actions": "notifyApproved" },
+        "reject": { "target": "rejected", "actions": "notifyRejected" }
+      }
+    },
+    "approved": { "type": "final", "output": { "outcome": "approved" } },
+    "rejected": { "type": "final", "output": { "outcome": "rejected" } }
+  }
+}

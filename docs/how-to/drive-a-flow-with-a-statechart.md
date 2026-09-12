@@ -247,6 +247,12 @@ runtimes never see the machine. The per-engine realities are the portable flow's
 
 See [the runtime matrix](../reference/runtime-matrix.md) for the full comparison.
 
+## A runnable example
+
+[`examples/Statechart`](../../examples/Statechart/README.md) is all of this end to end and needs no backend:
+an embedded chart, a data-carrying raise, the chart's own timer escalating a flow, and the crypto-shred at
+termination. `dotnet run --project examples/Statechart`.
+
 ## See also
 
 - [Write a step component](write-a-step-component.md) — the contract shape this reuses.

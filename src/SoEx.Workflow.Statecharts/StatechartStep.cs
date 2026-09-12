@@ -129,7 +129,7 @@ public sealed class StatechartStep
         {
             if (step.EventName.Length > 0)
             {
-                state = Step(machine, state, new NamedEvent(step.EventName, Payload(data)));
+                state = Step(machine, state, EventFor(step.EventName, data));
             }
 
             // Persisted by the machine that produced the state, which on a resume is the version that WROTE
@@ -287,8 +287,27 @@ public sealed class StatechartStep
     private string? Output(object? output) =>
         output is null ? null : JsonSerializer.Serialize(output, _snapshotJson);
 
-    /// <summary>The workflow event name a machine timer fires as — the machine sees it as its own timer id.</summary>
-    internal static string TimerEventName(string timerId) => $"xstate.timer.{timerId}";
+    /// <summary>
+    /// The workflow event name a machine timer fires as. Prefixed so it cannot collide with a business event
+    /// the chart declares, and so an operator reading a journal can tell the two apart.
+    /// </summary>
+    internal static string TimerEventName(string timerId) => TimerPrefix + timerId;
+
+    private const string TimerPrefix = "xstate.timer.";
+
+    /// <summary>
+    /// The event to feed the machine for a resumed workflow event.
+    /// <para>
+    /// A timer is NOT a named event: the machine matches its own timers by <see cref="TimerEvent"/> and looks
+    /// the id up in its ledger, so a named event spelled like a timer would simply not match — the chart would
+    /// re-arm the timer and sit there, which is a silent stall rather than a failure. Only a timer name carries
+    /// no payload; a raiser has nothing to say about a deadline passing.
+    /// </para>
+    /// </summary>
+    private MachineEvent EventFor(string eventName, MachineEventData? data) =>
+        eventName.StartsWith(TimerPrefix, StringComparison.Ordinal)
+            ? new TimerEvent(eventName[TimerPrefix.Length..])
+            : new NamedEvent(eventName, Payload(data));
 
     // Keep the deadline a timer already had; give a newly started one its deadline from now. A timer that
     // has gone away since the last step drops out, so the carried set never grows stale entries.
