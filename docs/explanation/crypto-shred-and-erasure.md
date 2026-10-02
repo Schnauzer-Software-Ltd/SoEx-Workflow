@@ -210,20 +210,21 @@ See [Make crypto-shred durable](../how-to/make-crypto-shred-durable.md) for wher
 ### Deserialization safety rests on the seal
 
 The journal payloads SoEx persists are serialized with the host's `IMessageSerializer`. The default
-SoEx serializer is polymorphic (it records each value's .NET type so it can round-trip the type back),
-which is a classic deserialization-gadget surface: if attacker-controlled bytes ever reached the
-deserializer, a forged type tag could instantiate an unexpected type. In SoEx.Workflow they do not,
-because every externally-influenceable payload is AES-256-GCM authenticated-decrypted under the
+SoEx serializer binds each value to its declared type and an explicit list of known types. A host can
+select the polymorphic Newtonsoft serializer instead, which records each value's .NET type so it can
+round-trip the type back. That is a classic deserialization-gadget surface: if attacker-controlled bytes
+ever reached the deserializer, a forged type tag could instantiate an unexpected type. In SoEx.Workflow
+they do not, because every externally-influenceable payload is AES-256-GCM authenticated-decrypted under the
 per-instance key before it is deserialized, so forging a payload requires the per-instance key, which an
 attacker does not have. The seal is therefore load-bearing for injection safety as well as for erasure:
 the same authenticated encryption that makes a shred final also gates what ever reaches the
 deserializer.
 
-For defense-in-depth, the serializer is a pluggable seam: supply your own `IMessageSerializer` that pins
-a type allowlist (a `SerializationBinder` for the Newtonsoft serializer, or a non-polymorphic serializer
-for your DTOs), and the gadget surface closes even under the impossible-by-design case of a forged
-in-envelope type. SoEx.Workflow does not ship such a binder by default because it does not configure the
-serializer (the host supplies it) and because the seal already closes the reachable path.
+For defense-in-depth on the Newtonsoft serializer, the serializer is a pluggable seam: stay on the default
+serializer, or supply your own `IMessageSerializer` that pins a type allowlist (a `SerializationBinder`),
+and the gadget surface closes even under the impossible-by-design case of a forged in-envelope type.
+SoEx.Workflow does not ship such a binder because it does not configure the serializer (the host supplies
+it) and because the seal already closes the reachable path.
 
 ## See also
 

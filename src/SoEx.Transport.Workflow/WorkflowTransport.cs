@@ -8,7 +8,7 @@ namespace SoEx.Transport.Workflow;
 /// channels at the workflow seam. Shared across runtimes (they differ only by their
 /// <see cref="IWorkflowRuntime"/>). A new runtime = this shape + a runtime — zero SoEx edits.
 /// </summary>
-public sealed class WorkflowTransport : Topology.Transport
+public sealed record WorkflowTransport : Topology.Transport
 {
     public WorkflowTransport()
     {

@@ -212,7 +212,7 @@ public static class MembershipSystem
             ],
         };
 
-        builder.SoEx(system);
+        builder.SoEx(system, WireKnownTypes.All);
         IHost host = builder.Build();
         host.Start();
 

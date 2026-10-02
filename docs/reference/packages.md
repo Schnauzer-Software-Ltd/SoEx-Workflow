@@ -65,8 +65,9 @@ The core `SoEx.Workflow` package is a plain binding/transport and takes no `SoEx
 Reference these at process startup:
 
 - `SoEx.Hosting` — to stand up the host. It bundles the default serializer
-  (`SoEx.Hosting.Serializers.NewtonsoftJson.OpenJsonMessageSerializer`), which the host registers as the
-  `IMessageSerializer` automatically, so there's no separate serializer package to add.
+  (`SoEx.Hosting.Serializers.SystemText.JsonMessageSerializer`), which the host registers as the
+  `IMessageSerializer` automatically, so there's no separate serializer package to add. It needs the
+  [known types](../how-to/choose-a-serializer.md#declare-the-known-types) passed to `builder.SoEx`.
 - `SoEx.Context` — if a step reads the ambient `SubjectContext`.
 
 ## Shipping status and upgrade paths
@@ -77,8 +78,8 @@ Know these before you build a deployment on this. They are disclosed rather than
   git tags or SemVer, and there is no CI gate in either repo. Consume by project reference at a pinned commit
   and re-run the attestation locally before you deploy. Packaging and a CI publish leg are deliberate future
   work, not an oversight.
-- **The substrate is a pinned prerelease.** The base SoEx packages are pinned to an exact unlisted prerelease
-  (`0.0.0-alpha-3.3`) with no compatibility policy. Treat a substrate bump as a breaking change until a stable
+- **The substrate is a pinned prerelease.** The base SoEx packages are pinned to an exact prerelease
+  (`0.0.0-alpha-4.1`) with no compatibility policy. Treat a substrate bump as a breaking change until a stable
   line exists: rebuild and re-attest against it.
 - **The governance stores create their schema with `EnsureCreated()`, not migrations.** The EF Core subject
   index and maintenance stores build their schema on first use and have no migration machinery, so there is no

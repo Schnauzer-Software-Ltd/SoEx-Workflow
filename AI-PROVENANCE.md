@@ -16,11 +16,10 @@ the boundary with SoEx core is auditable.
 ## Note on the SoEx core serializer
 
 SoEx.Workflow relies on the host-supplied `IMessageSerializer`. The default SoEx
-serializer is polymorphic (Newtonsoft `TypeNameHandling.All`); SoEx.Workflow keeps
-that gadget surface unreachable by authenticated-decrypting every payload under the
-per-instance key before deserializing it (see
+serializer is System.Text.Json bound to declared types plus an explicit known-types
+list. SoEx also ships a polymorphic Newtonsoft serializer (`TypeNameHandling.All`)
+that a host can select instead; SoEx.Workflow keeps that gadget surface unreachable
+by authenticated-decrypting every payload under the per-instance key before
+deserializing it (see
 [Crypto-shred and erasure](docs/explanation/crypto-shred-and-erasure.md#deserialization-safety-rests-on-the-seal)).
-Hardening the core serializer with a type allowlist is an upstream concern owned by
-the SoEx core project; consumers wanting defence-in-depth here can inject their own
-allowlisting `IMessageSerializer`. This is recorded so the dependency is auditable,
-not actionable in this repository.
+This is recorded so the dependency is auditable, not actionable in this repository.

@@ -1,33 +1,10 @@
 # Choose a message serializer
 
 SoEx ships several message serializers, and a governed flow runs on any of them. The stock
-`DefaultPipeline` selects the Newtonsoft `OpenJsonMessageSerializer`, which writes a type marker beside
-every value and so needs nothing from you. The others — System.Text.Json and BoundJson — bind values to
-their declared types instead. They are stricter, they carry no type markers a reader could be fooled by,
-and they need to be told about a handful of types up front. This page is what to tell them.
-
-If you are on the stock pipeline, you can stop reading. Nothing here applies.
-
-## Select the serializer
-
-A pipeline names the serializer, so selecting one means composing a pipeline that differs from
-`DefaultPipeline` in a single property:
-
-```csharp
-public sealed class SystemTextPipeline : IPipeline
-{
-    private static readonly DefaultPipeline Default = new();
-
-    public Type Dispatcher => Default.Dispatcher;
-    public Type TelemetryConfidentiality => Default.TelemetryConfidentiality;
-    public Type MessageProtection => Default.MessageProtection;
-    public Type[] ServiceInterceptors => Default.ServiceInterceptors;
-
-    public Type MessageSerializer => typeof(SoEx.Hosting.Serializers.SystemText.JsonMessageSerializer);
-}
-```
-
-Pass it where you already pass the topology: `builder.SoEx(topology, knownTypes, new SystemTextPipeline())`.
+`DefaultPipeline` selects System.Text.Json (`JsonMessageSerializer`), which binds every value to its
+declared type. It carries no type markers a reader could be fooled by, and in exchange it needs to be told
+about a handful of types up front. BoundJson works the same way. The Newtonsoft `OpenJsonMessageSerializer`
+writes a type marker beside every value instead, so it needs nothing from you.
 
 ## Declare the known types
 
@@ -52,7 +29,7 @@ var knownTypes = new KnownTypes([
     typeof(OnboardStep.Abandon),
 ]);
 
-builder.SoEx(topology, knownTypes, new SystemTextPipeline());
+builder.SoEx(topology, knownTypes);
 ```
 
 A type the writing host has not declared fails on the first step that needs it, and the message names the
@@ -60,6 +37,23 @@ type it wanted. Reading is not symmetric: a host that meets an ambient-context e
 declared drops that entry and carries on, so a subject stop can go missing without an error. Declare the
 same types on every host that takes part in a flow, including a worker you deploy separately from the
 caller.
+
+## Select a different serializer
+
+A pipeline names the serializer, so selecting another one means setting that one property on
+`DefaultPipeline`:
+
+```csharp
+using SoEx.Hosting.Default;
+using SoEx.Hosting.Serializers.NewtonsoftJson;
+using SoEx.Topology.Pipeline;
+
+var pipeline = new DefaultPipeline { MessageSerializer = new PipelineSerializer<OpenJsonMessageSerializer>() };
+```
+
+Pass it where you already pass the topology — `builder.SoEx(topology, knownTypes, pipeline)` — or set it
+as `Defaults` on a `Topology.System`. On the open serializer the known types are not needed; on BoundJson
+they are, exactly as above.
 
 ## Name the contract when you seal outside the governed step
 
@@ -71,9 +65,9 @@ var sealer = new WorkflowSealer(keys, serializer, nameof(IOnboardSteps.Step), co
 ```
 
 The endpoint reads a step envelope against the contract, so the seal has to write it the same way. On the
-stock serializer the argument is ignored and omitting it costs nothing, which is why it is optional; on a
-binding serializer, omitting it leaves the two halves disagreeing about how the step DTO on the wire is
-named. A concrete DTO survives that disagreement and a closed hierarchy does not, so the failure shows up
+open serializer the argument is ignored and omitting it costs nothing, which is why it is optional; on a
+binding serializer, the stock one included, omitting it leaves the two halves disagreeing about how the
+step DTO on the wire is named. A concrete DTO survives that disagreement and a closed hierarchy does not, so the failure shows up
 against exactly the flows most likely to be in production.
 
 `GatewaySealGuard` takes the same optional argument and rarely wants it: a gateway usually fronts several

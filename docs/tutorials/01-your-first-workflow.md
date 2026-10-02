@@ -26,12 +26,15 @@ dotnet new console -n FirstWorkflow
 cd FirstWorkflow
 # from a clone of this repo (adjust the relative path):
 dotnet add reference ../soex-workflow/src/SoEx.Workflow/SoEx.Workflow.csproj
+dotnet add reference ../soex-workflow/src/SoEx.Transport.Workflow/SoEx.Transport.Workflow.csproj
+dotnet add reference ../soex-workflow/src/SoEx.Workflow.Runtime.InMemory/SoEx.Workflow.Runtime.InMemory.csproj
 dotnet add package SoEx.Hosting --prerelease
 dotnet add package SoEx.Context --prerelease
 ```
 
-`SoEx.Hosting` and `SoEx.Context` are published as pre-release (`0.0.0-alpha-3.0`), so `--prerelease` is
-required — without it `dotnet add package` reports "no stable versions available".
+`SoEx.Hosting` and `SoEx.Context` are published as pre-release, so `--prerelease` is required — without it
+`dotnet add package` reports "no stable versions available". This repo builds against `0.0.0-alpha-4.1`; if
+`--prerelease` picks a different version, pin that one with `--version 0.0.0-alpha-4.1`.
 
 Everything below goes in `Program.cs`. Replace its contents as you follow along. One thing to know about
 the order: a C# file that uses top-level statements requires the `using` directives first, then the
@@ -121,8 +124,15 @@ var topology = new SoEx.Topology.HostMock   // qualified — `Host` below is Mic
     Instance = component, Implementation = component.GetType(),
     Endpoints = [binding], Proxies = [], ServiceCollection = services,
 };
+// The host's serializer binds every value to its declared type. The subject and your steps travel in
+// slots declared `object`, so name them up front.
+var knownTypes = new KnownTypes([
+    .. WorkflowKnownTypes.Framework,
+    typeof(OnboardStep.Lookup), typeof(OnboardStep.Invite), typeof(OnboardStep.Assign),
+]);
+
 var builder = Host.CreateApplicationBuilder();
-builder.SoEx(topology);
+builder.SoEx(topology, knownTypes);
 IHost host = builder.Build();
 host.Start();
 

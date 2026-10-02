@@ -100,7 +100,7 @@ The framework-understood facts of a step, extracted from the envelope without in
 | `WorkflowListeners` | Collects endpoints as the host starts; `ForAddress(binding.Transport.Address.Uri)` returns the bound `IWorkflowDispatch`. |
 | `WorkflowRegistration.RequireErasureEvent(Type)` | Throws at wiring time if the component doesn't implement `IErasureEvent`. |
 | `WorkflowEnvelope.AmbientFor(IMessageSerializer, SubjectContext?)` | Builds the ambient bytes carrying a subject. Returns `byte[]?`. |
-| `WorkflowKnownTypes.Framework` | The framework types to declare when the pipeline's serializer binds declared types. See [choose a serializer](../how-to/choose-a-serializer.md); ignore it on the stock pipeline. |
+| `WorkflowKnownTypes.Framework` | The framework types to declare to the host's serializer, alongside your own step DTOs. See [choose a serializer](../how-to/choose-a-serializer.md). |
 
 ## The wiring sequence
 
@@ -123,8 +123,9 @@ var topology = new SoEx.Topology.HostMock   // qualified — `Host` below is Mic
     Instance = component, Implementation = component.GetType(),
     Endpoints = [binding], Proxies = [], ServiceCollection = services,
 };
+var knownTypes = new KnownTypes([.. WorkflowKnownTypes.Framework /* , your step DTOs */]);
 var builder = Host.CreateApplicationBuilder();
-builder.SoEx(topology);
+builder.SoEx(topology, knownTypes);
 IHost host = builder.Build();
 host.Start();                                                          // endpoint registers as the host starts
 
@@ -139,9 +140,9 @@ var termination = new GovernedTermination(component, keys, index);
 Resolve the endpoint only after `host.Start()`. The snippet above is the whole composition (guard
 included); the private test suite wraps exactly this into a helper that returns `(step, termination)`.
 
-The pipeline is implicit here, so this composes on the stock `DefaultPipeline` and its Newtonsoft
-serializer. To run on System.Text.Json or BoundJson instead, pass a pipeline and the types it has to be
-told about — `builder.SoEx(topology, knownTypes, pipeline)` — as
+The pipeline is implicit here, so this composes on the stock `DefaultPipeline` and its System.Text.Json
+serializer, which is why the known types are passed. To run on another serializer, pass a pipeline as well —
+`builder.SoEx(topology, knownTypes, pipeline)` — as
 [choose a message serializer](../how-to/choose-a-serializer.md) sets out.
 
 ## See also
