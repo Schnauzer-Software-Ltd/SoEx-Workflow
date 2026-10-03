@@ -1,15 +1,20 @@
-# Example — a statechart as a Manager's process
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
 
-An expense-approval **Manager** whose process is a statechart: drawn in a statechart tool, exported as XState
-v6 JSON, and run as a governed SoEx workflow.
+# Example: a statechart as the process of a Manager
+
+This example is an expense-approval **Manager**. Its process is a statechart. You draw the statechart in
+a statechart tool and export it as XState v6 JSON. SoEx runs it as a governed workflow.
 
 ```
 dotnet run --project examples/Statechart
 ```
 
-No backend needed: it runs on the in-process runtime.
+The example runs on the InProc runtime. It needs no runtime server.
 
-## The layout is the point
+## The layout
+
+The layout is the main lesson of this example.
 
 ```
 Component/                                  ← ALL the business logic is in here
@@ -25,12 +30,13 @@ Component/                                  ← ALL the business logic is in her
 Hosts/InProc/Program.cs                     ← framework wiring ONLY: runtime, stores, transport, composition
 ```
 
-Everything outside `Component/` is plumbing. Nothing in `Hosts/` decides what the business does — the process
-is the manager's chart, and the work each step performs is the manager's call into a component.
+All code outside `Component/` is plumbing. The business decisions are in `Component/`. The process is the
+chart of the Manager. The work of each step is a call from the Manager into a component. `Hosts/` holds
+no business decisions.
 
-Note where the chart lives: beside the manager, not with the host. It is the manager's orchestration
-externalised, so it belongs to the manager, and it is an embedded resource so that every worker loads
-identical bytes — a chart that differed between nodes would make the flow itself diverge.
+The chart is next to the Manager. It is the orchestration of the Manager, in a separate file, so it
+belongs to the Manager. The chart is an embedded resource. Thus each worker loads the same bytes. If the
+chart were different on two nodes, the flow would also be different on them.
 
 ## What it shows
 
@@ -51,26 +57,30 @@ process  expense-approval  (embedded with the manager, loaded once)
    key live after completion? False  (false = journal crypto-shredded)
 ```
 
-- **The chart never crosses the wire.** It is loaded once at start; only a claim's snapshot travels, sealed
-  under the per-claim key like any other step payload.
-- **The raise carries data.** Who approved is knowable only to the approver, so it travels with the event and
-  reaches the chart as the event's payload. The chart still decides what happens next.
-- **The process escalates itself.** Nothing in the host schedules that; the chart's own delayed transition
-  becomes the wait's durable timer. (InProc's timer is virtual and the program advances the clock, which is
-  what makes a 72-hour process testable in milliseconds. On Durable Task, Temporal, Elsa or Restate it is a
-  real durable timer and that line is absent.)
-- **The key is destroyed at termination**, so everything the journal still holds for a finished claim is
-  unrecoverable. The manager got that by being an ordinary governed manager.
+- **The chart stays in the process.** The example loads the chart one time, at start. Only the snapshot of
+  a claim goes across the wire. The per-claim key seals the snapshot, the same as each other step payload.
+- **The raise contains data.** Only the approver knows who approved. Thus this value goes with the event
+  and gets to the chart as the payload of the event. The chart then decides the next step.
+- **The process escalates itself.** The host schedules no escalation. The delayed transition of the chart
+  becomes the durable timer of the wait. On InProc, the timer is virtual and the program moves the clock
+  forward. Thus you can test a 72-hour process in milliseconds. On Durable Task, Temporal, Elsa, or
+  Restate, the timer is a real durable timer, and that line is absent.
+- **Termination destroys the key.** After termination, all data that the journal holds for a finished
+  claim is unrecoverable. The Manager gets this behavior because it is a usual governed Manager.
 
-Note that the notifications appear as each step runs, not collected at the end. A SoEx component is resolved
-per call and holds nothing between them, so the chart's actions reach their components through a factory rather
-than capturing an instance at load. Anything a component accumulated in a field would be gone by the next step;
-state that has to survive belongs in the sealed journal or an injected store.
+The notifications appear when each step runs. They do not appear together at the end. SoEx resolves a
+component for each call, and the component holds no data between calls. Thus the actions of the chart get
+to their components through a factory. They do not capture an instance at load. A value that a component
+keeps in a field is lost before the next step. Keep state that must continue in the sealed journal or in
+an injected store.
 
-## What is not here
+## Related topics
 
-One process, one runtime, so the shape stays readable. The how-to covers choosing between JSON and SCXML and
-what SCXML costs, serving several processes from one manager, and keeping old process versions registered
-while the claims that started on them drain.
+This example has one process and one runtime, so the shape is easy to read. The how-to guide covers these
+topics:
+
+- how to select JSON or SCXML, and the cost of SCXML
+- how to serve several processes from one Manager
+- how to keep old process versions registered until the claims that started on them drain
 
 See [Drive a flow with a statechart](../../docs/how-to/drive-a-flow-with-a-statechart.md).

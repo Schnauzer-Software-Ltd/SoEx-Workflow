@@ -1,9 +1,10 @@
 namespace SoEx.Workflow;
 
 /// <summary>
-/// Guards the clear-text artifacts the shred does <b>not</b> cover — runtime-visible names
-/// (instance ids and event names) and the returned workflow result, all journaled in
-/// clear — from carrying a subject value. (Timers carry no guarded id.) The subject lives only in the
+/// Guards the clear-text values the shred does <b>not</b> cover from carrying a subject value: instance
+/// ids, the event names of a portable wait and of a utility raise, a gateway raise id (when a
+/// <see cref="GatewaySealGuard"/> is wired), the returned workflow result, and held-log error text. A
+/// timer has a duration and no name, so there is nothing to guard. The subject lives only in the
 /// (prunable) subject index and the encrypted payload, so a copy in one of these survives the termination
 /// crypto-shred. Detection is delegated to an <see cref="ISubjectMatcher"/> — the default
 /// <see cref="SubstringSubjectMatcher"/> scans for the known subject ids, but a consumer can plug in a

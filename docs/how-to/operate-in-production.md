@@ -1,77 +1,109 @@
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
+
 # Operate in production
 
-What to watch, what to alert on, and how to recover once SoEx-Workflow is carrying real traffic. This is the
-day-2 companion to [Secure a PII deployment](secure-a-pii-deployment.md) (the pre-production checklist) and
-[Run erasure maintenance](run-erasure-maintenance.md) (the maintenance runner itself).
+This guide tells you what to monitor, what to alert on, and how to recover when SoEx-Workflow has real
+traffic. Use it after you go live. Use it with two other guides:
+
+- [Secure a PII deployment](secure-a-pii-deployment.md): the checklist before production.
+- [Run erasure maintenance](run-erasure-maintenance.md): the maintenance runner.
 
 ## Wire the metrics
 
-The framework emits a `System.Diagnostics.Metrics` meter named `SoEx.Workflow`. Subscribe to it from your
-telemetry stack, for example with OpenTelemetry:
+The framework emits a `System.Diagnostics.Metrics` meter with the name `SoEx.Workflow`.
+
+1. Subscribe to the meter from your telemetry stack. This example uses OpenTelemetry.
 
 ```csharp
 builder.Services.AddOpenTelemetry().WithMetrics(m => m.AddMeter(WorkflowMetrics.MeterName));
 ```
 
-Then create one `WorkflowMetrics` at the composition root and thread it into the governed components that emit
-(the governed step, the termination, the erasure coordinator all take an optional `WorkflowMetrics`), and call
-`TrackBacklog(pendingStore)` once so the backlog gauges read your live pending-erasure store.
+2. Create one `WorkflowMetrics` at the composition root.
+3. Pass it to each governed component that emits metrics. The governed step, the termination, and the
+   erasure coordinator each take an optional `WorkflowMetrics`.
+4. Call `TrackBacklog(pendingStore)` one time. The backlog gauges then read your live pending-erasure
+   store.
 
-The instruments (names are a stable contract you can build dashboards against):
+The names of the instruments are a stable contract. You can build dashboards on them.
 
 | Instrument | Kind | Meaning |
 |---|---|---|
-| `soex.workflow.steps.executed` | counter | Governed steps dispatched successfully (per attempt). |
-| `soex.workflow.steps.failed` | counter | Governed step dispatches that threw (per attempt, so this includes retries). |
-| `soex.workflow.shreds` | counter, tag `outcome=complete\|held` | Terminations that crypto-shredded, vs those parked (key retained). |
-| `soex.workflow.sweep.instances` | counter, tag `state=complete\|held\|unresolved` | Instances handled by an abandoned-instance sweep pass. |
-| `soex.workflow.erasure.deadline_escalations` | counter | Erasure requests whose statutory deadline was escalated. |
-| `soex.workflow.erasure.backlog.count` | gauge | Open erasure requests awaiting a drain. |
-| `soex.workflow.erasure.backlog.oldest_age.seconds` | gauge | Age of the oldest un-drained erasure request. |
+| `soex.workflow.steps.executed` | counter | Governed steps that dispatched successfully. It counts each attempt. |
+| `soex.workflow.steps.failed` | counter | Governed step dispatches that threw. It counts each attempt, so it includes retries. |
+| `soex.workflow.shreds` | counter, tag `outcome=complete\|held` | Terminations that crypto-shredded (`complete`), and terminations that went to held state with the key kept (`held`). |
+| `soex.workflow.sweep.instances` | counter, tag `state=complete\|held\|unresolved` | Instances that a pass of the abandoned-instance sweep handled. |
+| `soex.workflow.erasure.deadline_escalations` | counter | Erasure requests with an escalated statutory deadline. |
+| `soex.workflow.erasure.backlog.count` | gauge | Open erasure requests that wait for a drain. |
+| `soex.workflow.erasure.backlog.oldest_age.seconds` | gauge | The age of the oldest erasure request that the drain has not processed. |
 
 ## What to alert on
 
-- **Backlog age.** `erasure.backlog.oldest_age.seconds` climbing past a fraction of your statutory deadline
-  means the maintenance runner is not keeping up (or has stopped). This is the single most important alert: it
-  is the one that fires before a deadline is breached.
-- **Held count.** A rising `shreds{outcome=held}` or `sweep.instances{state=held}` means instances are parking
-  instead of completing their erasure. Each held instance keeps its key and needs an audited re-drive.
-- **Unresolved sweeps.** `sweep.instances{state=unresolved}` means the sweep found aged instances your resolver
-  could not map to a target. Their keys survive until you can resolve them, so investigate rather than ignore.
-- **Step failure rate.** A sustained `steps.failed` rate signals a poison step retrying, or a dependency down.
+- **Backlog age.** This is the most important alert. It fires before a deadline is breached. If
+  `erasure.backlog.oldest_age.seconds` increases past a fraction of your statutory deadline, the
+  maintenance runner is too slow or has stopped.
+- **Held count.** If `shreds{outcome=held}` or `sweep.instances{state=held}` increases, instances go to
+  held state and do not complete their erasure. Each held instance keeps its key. Each one needs an
+  audited re-drive.
+- **Unresolved sweeps.** `sweep.instances{state=unresolved}` counts aged instances that your resolver
+  could not map to a target. Their keys stay until you resolve them. Investigate each one.
+- **Step failure rate.** A sustained `steps.failed` rate shows a poison step that retries, or a
+  dependency that is down.
 
-## Do not let the maintenance loops go silent
+## Monitor the maintenance loops
 
-The erasure sweep and the maintenance loop keep running across a transient failure, but they will not tell you
-they failed unless you wire the hook. Both loops take an `onError` callback and hand it the running
-`LoopPassHealth` (consecutive failures, last success timestamp), and an `onPass` callback with each pass report.
-Wire `onError` to your logging and alerting, and alert on `LoopPassHealth.ConsecutiveFailures` or a stale
-`LastSuccess`. A backstop that has silently stopped while credentials expired is the failure mode this exists
-to catch. Run the maintenance runner on exactly one instance and monitor it from outside.
+The erasure sweep and the maintenance loop continue to run after a transient failure. They report a
+failure only through a hook that you wire. Each loop takes two callbacks:
+
+- `onError` receives the exception and the current `LoopPassHealth`: the number of consecutive failures
+  and the timestamp of the last success. On the maintenance loop, it also receives the name of the pass.
+- `onPass` runs after each pass that succeeds. On `ErasureSweepLoop`, it receives the `SweepReport`. On
+  the maintenance loop, it receives the name of the pass and the `LoopPassHealth`.
+
+1. Wire `onError` to your logging and alerting.
+2. Alert on `LoopPassHealth.ConsecutiveFailures` or on a stale `LastSuccess`.
+3. Run the maintenance runner on one instance only.
+4. Monitor that instance from outside.
+
+These alerts find a backstop that stopped without a report, for example when its credentials expired.
 
 ## Recover a held instance
 
-A held instance is not lost: its key is retained and it is recorded in the held registry. Enumerate the
-registry, investigate the recorded (subject-free) failure reason, then re-drive it through the termination
-coordinator (`ReDriveAsync`), which re-runs the retention extraction and, on success, completes the shred. A
-crash between `Destroy` and the index prune is repaired the same way: a re-entered termination sees the key
-already gone and re-prunes the dangling edge.
+A held instance keeps its key. The held registry records it. You can recover it.
+
+1. Enumerate the held registry.
+2. Investigate the recorded failure reason. The reason contains no subject.
+3. Re-drive the instance through the termination coordinator with `ReDriveAsync`.
+
+`ReDriveAsync` runs the retention extraction again. If the extraction succeeds, it completes the shred.
+
+The same procedure repairs a crash between `Destroy` and the prune of the index. The termination runs
+again, finds that the key is already gone, and prunes the dangling edge again.
 
 ## Validate configuration at start
 
-Do not ship dev defaults. Supply every endpoint and secret explicitly and fail fast when one is missing rather
-than falling back to a built-in default (the example host now refuses to default the OpenBao token to `root`).
-Give the OpenBao token rights only on the Transit mount; keep a RavenDB master KEK in a KMS/HSM, not app config.
+1. Remove all dev defaults before you ship.
+2. Supply each endpoint and each secret explicitly.
+3. Fail fast when a value is missing. Do not fall back to a built-in default.
+4. Give the OpenBao token rights on the Transit mount only.
+5. Keep the RavenDB master KEK in a KMS or an HSM. Do not keep it in the app configuration.
 
-## Known operational gaps
+The example host requires an explicit OpenBao token (`PIIMAKER_OPENBAO_TOKEN`). If the token is missing,
+the host fails at start. It does not use `root` as a default.
 
-These are disclosed rather than closed; account for them in your runbook.
+## Known operational limits
 
-- **No packages or CI.** Consume by project reference at a pinned commit and re-run the attestation locally.
-  There is no NuGet package, no versioning, and no CI gate. See [packages](../reference/packages.md).
-- **Restate step retry is unbounded.** On the Restate sidecar a failing step retries with infinite backoff and
-  does not yet park. Wire external stuck-instance alerting on the Restate leg. See the failure row in the
+The project discloses these limits and keeps them open. Include them in your runbook.
+
+- **No published packages, no release versions, no CI.** The packages are not published on nuget.org.
+  The repository has no git tags, and the projects set no release version. The repository has no CI
+  pipeline. Consume the code by project reference at a pinned commit. Run the attestation again locally. See
+  [packages](../reference/packages.md).
+- **Unbounded Restate step retry.** On the Restate sidecar, a step that fails retries with infinite
+  backoff. It does not go to held state yet. Wire external alerting for stuck instances on Restate. See
+  the failure row in the
   [runtime matrix](../reference/runtime-matrix.md#step-failure-retry-and-poison).
-- **OpenBao shred finality is bounded by snapshot retention.** With no client-held KEK to rotate, a restored
-  pre-destroy storage snapshot reverses a shred. Bound snapshot retention below your erasure deadline and guard
-  unseal-key custody. See [Make crypto-shred durable](make-crypto-shred-durable.md).
+- **OpenBao shred finality.** Snapshot retention limits the finality of a shred on OpenBao. There is no
+  client-held KEK to rotate. Thus a restore of a storage snapshot from before a destroy reverses a shred.
+  Keep snapshot retention shorter than your erasure deadline. Protect the custody of the unseal keys. See
+  [Make crypto-shred durable](make-crypto-shred-durable.md).

@@ -78,7 +78,7 @@ public static class Program
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
         // The stock pipeline serializes with System.Text.Json, which binds values to their declared types. The
-        // ambient subject stop and the steps the portable flow carries in WorkflowAction are declared `object`,
+        // ambient SubjectContext entry and the steps the portable flow carries in WorkflowAction are declared `object`,
         // so the serializer is told about them here.
         builder.SoEx(topology, new KnownTypes([
             .. WorkflowKnownTypes.Framework,

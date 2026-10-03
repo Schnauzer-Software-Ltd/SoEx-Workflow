@@ -3,203 +3,261 @@
 
 # Reference — runtime matrix
 
-How the SoEx model maps to each runtime, and where their trigger semantics diverge. The governed core
-is identical on every runtime (the same pipeline, key mint, subject index, idempotency, and
-termination lifecycle); only the flow and the engine's edge behaviors differ. For the reasoning see
+This page shows how the SoEx model maps to each runtime. It also shows the trigger behavior of each
+runtime. The governed core is the same on each runtime. It has one pipeline, one key mint, one subject
+index, one idempotency model, and one termination lifecycle. The flow and the edge behaviors are
+different on each runtime. For the reasons, see
 [Runtimes and durability](../explanation/runtimes-and-durability.md).
 
-**Guard coverage (native vs portable).** The portable flow controls every runtime-visible surface, so
-it guards them all automatically: the instance id, each step result, and the flow's own wait/timer
-names and final return value. In the native model the consumer authors the flow, so the framework only
-guards what flows through `GovernedStep`. The instance id and each step result are guarded on every
-runtime, but the orchestration's own return value and any consumer-chosen wait/event name are the
-consumer's duty: keep them PII-free, or pass them through `IGovernedStep.GuardVisibleName(...)` (the
-same chokepoint the drivers use, and the one the Zeebe host applies to its job/incident names).
-Likewise keep PII out of your own step exception messages. The framework scrubs a known subject from a
-failure message before it reaches durable backend state, but that is a substring safety net, not full
-PII detection.
+## Guards on visible values
 
-One piece of *automated* tooling for that consumer duty exists on only one runtime: Camunda 8 / Zeebe.
-Because a BPMN flow is a declarative artifact, `ZeebeWorkflowHost.ValidateResource` (run at deploy time)
-lints the diagram's io-mappings and warns if a service task copies a framework-owned variable (`seed`/
-`instanceId`) into a journaled variable under an unguarded name. The other native runtimes author the flow
-in imperative code with no equivalent declarative surface to scan and no replay-deterministic seam at which
-to guard the flow's own return value, so there is no equivalent deploy-time lint — the `GovernedStep` guards
-(instance id + each step result, on every runtime) still apply, and the rest is consumer discipline. Porting
-a flow off Zeebe therefore loses the deploy-time warning, not the `GovernedStep` guards. See the
+The framework guards the values that a runtime can see. A guard keeps a known subject out of the value.
+The values that the framework guards depend on the consumption model.
+
+- **Portable flow.** The portable flow controls each value that the runtime can see. It guards all of
+  them automatically: the instance id, each step result, the names of its waits and timers, and its final
+  return value.
+- **Native flow.** You write the flow. The framework guards the values that go through `GovernedStep`:
+  the instance id and each step result, on each runtime. You are responsible for the return value of the
+  orchestration and for each wait name or event name that you choose. Keep PII out of these values, or
+  pass them through `IGovernedStep.GuardVisibleName(...)`. The drivers use the same method. The Zeebe host
+  applies it to its job names and incident names.
+
+Keep PII out of the exception messages of your steps. Before a failure message goes into the durable
+state of the runtime, the framework removes each known subject from it. This removal is a substring
+safety net. It does not detect all PII.
+
+Camunda 8 / Zeebe has a deploy-time check for your part of this work. A BPMN flow is a declarative
+artifact. At deploy time, `ZeebeWorkflowHost.ValidateResource` checks the io-mappings of the diagram. It
+gives a warning if a service task copies a variable of the framework (`seed`/`instanceId`) into a
+journaled variable that has an unguarded name.
+
+The other native runtimes have no deploy-time check. On these runtimes, you write the flow in imperative
+code. That code has no declarative surface to scan. It also has no replay-deterministic point at which
+the framework can guard the return value of the flow. The `GovernedStep` guards apply on each runtime:
+the instance id and each step result. You are responsible for the other values. If you move a flow from
+Zeebe to another runtime, you lose the deploy-time warning. You keep the `GovernedStep` guards. See the
 *Native PII-guard tooling* row below.
 
 ## How the model maps (native flow)
 
-A native flow has no `WorkflowAction`, so the portable flow's `.Enrolling(...)` seam does not apply: the
-flow author owns the `StepContext` and therefore owns the ambient. On the **portable** flow, enrolling a
-subject a step learned behaves identically on all five runtimes — each driver folds the declared subjects
-in before it flattens the action, so the subject rides the sealed continuation and never reaches the
-journal. It is covered by the cross-runtime conformance suite rather than listed per engine here.
+A native flow has no `WorkflowAction`. The `.Enrolling(...)` method of the portable flow thus does not
+apply. The author of the flow owns the `StepContext`, and thus owns the ambient bytes.
+
+In the portable flow, enrollment of a subject that a step learned works the same on all five runtimes
+that support the portable flow. Each driver adds the declared subjects before it flattens the action.
+The subject goes in the sealed continuation and never goes into the journal. The cross-runtime
+conformance suite covers this behavior, so the table below has no row for it.
 
 | Concept | DTFx | Temporal | Elsa | Restate | Camunda 8 / Zeebe |
 |---|---|---|---|---|---|
-| **Flow (consumer-authored)** | `GovernedTaskOrchestrator.Flow` (CallActivity + WaitForExternalEvent) | `[Workflow]` (ExecuteActivity + WaitConditionAsync) | registered Elsa workflow (activities + bookmarks) | Restate sidecar (`ctx.run` + durable promise) | BPMN diagram (service tasks + message-catch events), broker-owned |
+| **Flow (you write it)** | `GovernedTaskOrchestrator.Flow` (CallActivity + WaitForExternalEvent) | `[Workflow]` (ExecuteActivity + WaitConditionAsync) | registered Elsa workflow (activities + bookmarks) | a Rust Restate service in your own sidecar (`ctx.run` + durable promise) | BPMN diagram (service tasks + message-catch events). The broker owns it. |
 | **Governed step** | step activity → `GovernedStep.ExecuteAsync` | `[Activity]` → same | activity → same | `POST /gov-step` → same | service-task job worker → same |
-| **Step dispatch** | `WorkflowEndpoint<I>` → `EndpointPipeline.ServicePipeLine<I>` → `DefaultDispatcher` → `component.<op>(typedDto)` | ← same | ← same | ← same (over HTTP) | ← same (via the job worker) |
-| **Termination hook** | base orchestrator → `GovernedTerminationActivity` | `GovernedTerminationInterceptor` → termination activity | `GovernedTerminationActivity` | `POST /gov-terminate` → `GovernedTermination` | process end execution-listener job → `GovernedTermination` |
-| **Durability model** | event-sourced replay | event-sourced replay | checkpoint/resume (bookmarks) | journalled (out-of-process sidecar) | broker-journalled (process variables) |
-| **Native PII-guard tooling** | none — consumer duty + `GovernedStep` guards | none — same | none — same | none — same | deploy-time BPMN io-mapping lint (`ValidateResource`) |
-| **Subject learned mid-flow** | consumer duty: build a fresh `SubjectContext.Managed(...)` ambient and pass it on the `StepContext` | ← same | ← same | ← same | ← same |
+| **Step dispatch** | `WorkflowEndpoint<I>` → `EndpointPipeline.ServicePipeLine<I>` → `DefaultDispatcher` → `component.<op>(typedDto)` | ← same | ← same | ← same (over HTTP) | ← same (through the job worker) |
+| **Termination hook** | base orchestrator → `GovernedTerminationActivity` | `GovernedTerminationInterceptor` → termination activity | `GovernedTerminationActivity` | `POST /gov-terminate` → `GovernedTermination` | process-end execution-listener job → `GovernedTermination` |
+| **Durability model** | event-sourced replay | event-sourced replay | checkpoint/resume (bookmarks) | journaled (sidecar out of process) | journaled by the broker (process variables) |
+| **Native PII-guard tooling** | none. You guard the values. The `GovernedStep` guards apply. | none. Same as DTFx. | none. Same as DTFx. | none. Same as DTFx. | deploy-time lint of BPMN io-mappings (`ValidateResource`) |
+| **Subject learned in the flow** | You make a new `SubjectContext.Managed(...)` ambient and pass it on the `StepContext`. | ← same | ← same | ← same | ← same |
 
-The invariant is in the *Step dispatch* row: the component is invoked the same way on every runtime,
-by the SoEx endpoint pipeline, so your step code is identical and only the flow around it changes.
+The *Step dispatch* row is the same on each runtime. The SoEx endpoint pipeline calls the component in
+the same way on each runtime. Your step code is thus the same on each runtime. Only the flow around it
+changes.
+
+On Restate, a native flow is Rust code. You write it as a Restate service in a sidecar that you build. The
+PiiMaker example does this in `examples/PiiMaker/Hosts/Restate/sidecar-rs`. The framework sidecar
+(`restate-sidecar-rs`) serves the portable flow (`OnboardWorkflow`). It also contains one fixed native
+onboarding flow (`NativeOnboardWorkflow`), which the Tier-2 tests use.
 
 ## Availability
 
 | Runtime | Native flow | Portable flow |
 |---|---|---|
-| InProc | — (no native backend) | Yes (always portable) |
+| InProc | — (InProc has no native runtime) | Yes (always portable) |
 | Durable Task | Yes | Yes |
 | Temporal | Yes | Yes |
-| Elsa | Yes | Yes (durable timers need a consumer-driven resumer — see below) |
+| Elsa | Yes | Yes (durable timers need a resumer that you host. See below.) |
 | Restate | Yes | Yes |
-| Camunda 8 / Zeebe | Yes | — (native-only) |
+| Camunda 8 / Zeebe | Yes | — (native flow only) |
 
-> **Elsa portable durable timers need a consumer-driven resumer.** On every other engine a portable
-> `WorkflowAction.Delay` or a wait-with-timeout fires on the engine's own clock. Elsa is the exception: the
-> driver suspends on a `__timer` bookmark that carries its due time (`dueAt`) and the sealed step to resume
-> into, but the framework does not host a scheduler for Elsa, so nothing fires it in a bare Elsa deployment.
-> A production Elsa host must run a background resumer that scans due `__timer` bookmarks and resumes them (or
-> wire Elsa's own scheduling feature). The building block ships — the bookmark records everything a resumer
-> needs — but hosting the resumer is the consumer's job; until it is wired, a portable timer on Elsa parks
-> indefinitely. Prefer Temporal for a portable flow that leans on durable timers.
+> **On Elsa, portable durable timers need a resumer that you host.** On the other runtimes, a portable
+> `WorkflowAction.Delay` or a wait with a timeout fires on the clock of the runtime. On Elsa, the driver
+> suspends the instance on a `__timer` bookmark. The bookmark holds its due time (`dueAt`) and the sealed
+> step to resume. The framework does not host a scheduler for Elsa. In an Elsa deployment with no added
+> scheduler, no component fires the timer. A production Elsa host must run a background resumer. The
+> resumer scans the due `__timer` bookmarks and resumes them. Alternatively, configure the scheduling
+> feature of Elsa. The bookmark records all the data that a resumer needs. You must host the resumer.
+> Until you do, a portable timer on Elsa stays parked for an indefinite time. For a portable flow that
+> uses durable timers, we recommend Temporal.
 
 ## Gateway semantics
 
-The `IWorkflowGateway` interface is uniform and the happy path matches on every engine (a shared
-gateway-conformance suite in the private test repo asserts identical start→raise behavior across all
-adapters, including duplicate-start rejection). A duplicate start of a live id raises the same
-`WorkflowInstanceAlreadyExistsException` on every adapter that can detect it, so a caller catches one type
-regardless of engine (the example surfaces it as an HTTP 409 rather than a raw fault). One edge still
-diverges and one engine cannot detect the duplicate at all, so design your caller for the engine you target.
+The `IWorkflowGateway` interface is the same on each runtime. The normal path behaves the same on each
+runtime. A shared gateway conformance suite in the private test repo checks this. It asserts the same
+start→raise behavior on all adapters, and it includes the rejection of a duplicate start.
+
+Each adapter that can detect a duplicate start of a live id raises
+`WorkflowInstanceAlreadyExistsException`. A caller thus catches one type on each runtime. The example
+shows this exception as an HTTP 409. One edge behavior is different between runtimes. One runtime cannot
+detect a duplicate start. Design your caller for the runtime that you use.
 
 | Behavior | InProc | Durable Task | Temporal | Elsa | Restate | Zeebe |
 |---|---|---|---|---|---|---|
-| **Duplicate start** (same id twice) | `WorkflowInstanceAlreadyExistsException` while running; a completed id frees and can be re-onboarded | `WorkflowInstanceAlreadyExistsException` while live; a completed id frees | `WorkflowInstanceAlreadyExistsException` (from `WorkflowAlreadyStarted`) | `WorkflowInstanceAlreadyExistsException` (a run already holds the correlation) | `WorkflowInstanceAlreadyExistsException` (a key runs once ever, so a completed key stays taken) | plain `StartAsync`: **not detectable** — the broker mints its own key, so start-idempotency is the caller's duty; `StartByMessageAsync` dedupes by message id within a TTL |
-| **Raise before the wait is armed** | buffered | buffered | buffered (durable signal) | rejected (no bookmark yet) | resolved into the promise when the wait arms | broker-correlated (message TTL) |
-| **Multi-branch wait** (several named events racing the timer) | all branches parked at once; declared-order tie-break | one external-event receiver per branch | one signal name per branch, checked in declared order | one bookmark per branch; the rest are burned on resume | one durable promise per branch, raced together; write-once per name per generation | portable flow not available (native BPMN only) |
-| **Statechart-backed step** ([how-to](../how-to/drive-a-flow-with-a-statechart.md)) | yes | yes | yes | yes, but a machine with an `after(...)` timer needs the timer resumer below | yes, unless the machine can be resumed twice by the SAME event name in one generation (write-once promise) | not available (no portable flow) |
-| **Idempotent raise** (`raiseId`) | dedupes (per-instance handled-id set, instance-lifetime) | dedupes (portable flow; per-generation — the set resets across continue-as-new) | dedupes (portable flow; per-generation — resets across continue-as-new) | dedupes when an `IIdempotencyStore` is wired, else `NotSupportedException` | deduped by construction (write-once promise; `raiseId` advisory) | dedupes via broker message id within TTL |
+| **Duplicate start** (same id two times) | `WorkflowInstanceAlreadyExistsException` while the instance runs. A completed id becomes free and you can onboard it again. | `WorkflowInstanceAlreadyExistsException` while the instance is live. A completed id becomes free. | `WorkflowInstanceAlreadyExistsException` (from `WorkflowAlreadyStarted`) | `WorkflowInstanceAlreadyExistsException` (a run already holds the correlation) | `WorkflowInstanceAlreadyExistsException`. A key runs one time only, so a completed key stays taken. | plain `StartAsync`: **the adapter cannot detect it**. The broker makes its own key, so the caller is responsible for start idempotency. `StartByMessageAsync` removes duplicates by message id within a TTL. |
+| **Raise before the wait is armed** | buffered | buffered | buffered (durable signal) | rejected (no bookmark yet) | goes into the promise when the wait arms | correlated by the broker (message TTL) |
+| **Multi-branch wait** (named events that race the timer) | All branches park at the same time. Declared order breaks a tie. | one external-event receiver for each branch | one signal name for each branch, checked in declared order | one bookmark for each branch. On resume, the other bookmarks are burned. | one durable promise for each branch, all raced together. Write-once for each name in each generation. | portable flow not available (native BPMN only) |
+| **Statechart-backed step** ([how-to](../how-to/drive-a-flow-with-a-statechart.md)) | yes | yes | yes | yes. A machine with an `after(...)` timer needs the timer resumer above. | yes. Exception: a machine that the SAME event name can resume two times in one generation (write-once promise). | not available (no portable flow) |
+| **Idempotent raise** (`raiseId`) | removes duplicates (set of handled ids for each instance, for the life of the instance) | removes duplicates (portable flow, for each generation. The set resets at continue-as-new.) | removes duplicates (portable flow, for each generation. The set resets at continue-as-new.) | removes duplicates if you configure an `IIdempotencyStore`. Otherwise, `NotSupportedException`. | removes duplicates by design (write-once promise. `raiseId` is advisory.) | removes duplicates by broker message id within the TTL |
 
-Practical consequences:
+Results for the caller:
 
-- On InProc a completed id can be re-onboarded as a fresh generation; on Restate a key runs once ever.
-  Don't assume one rule across engines.
-- On Elsa, make sure the wait is armed before you raise (or retry), and wire an `IIdempotencyStore` if you
-  need idempotent raises. Elsa is also the one adapter that resolves the raise host-side rather than inside
-  the flow, because it drives workflow definitions you author.
-- A re-raise of an already-handled event re-executes its `OnEvent` continuation under a fresh sequence.
-  It is not deduplicated by event name, because two raises of one name are two business events; use a
-  `raiseId` to make a specific raise idempotent.
-- On Temporal and Durable Task the `raiseId` dedup set is per generation: it resets across
-  continue-as-new, so a retried raise that straddles a `Loop` (CAN) boundary can deliver twice. If a
-  raise must be exactly-once across a CAN boundary, gate it on a durable effect rather than the
-  in-memory set.
-- The two engines differ at the CAN boundary in opposite directions. Durable Task continues-as-new with
-  `preserveUnprocessedEvents: false` — a raise that lands in the continue-as-new transition window is
-  **dropped**, not carried into the next generation. This is deliberate: carrying buffered events forward would
-  reset the per-generation dedup semantics. If a raise near a `Loop` must not be lost, make it re-drivable
-  (re-raise until the flow acknowledges it) rather than relying on it being buffered across the boundary.
-- For single-active start on Zeebe, use `StartByMessageAsync` (TTL-bounded broker dedup); plain `StartAsync`
-  has no duplicate-start protection, so start from a `DeterministicInstanceId` and gate re-entry at the seam.
-  Elsa has the same hazard on a plain start by correlation id — two live instances of one logical id share one
-  key, and the first to terminate shreds the other's live data — so gate the single-active start there too.
-- A multi-branch wait behaves the same on every runtime that has the portable flow, with one exception.
-  On Restate a durable promise is write-once per event NAME for the life of a generation, so a branch
-  that can be raised more than once (a resend button, say) delivers only its first raise unless the flow
-  takes a `Loop` after handling it, which starts a fresh generation with fresh promises. The other
-  engines consume the delivery and re-arm, so a repeated raise at one branch just works.
-- On Elsa, a raise that arrives for a branch after another branch has already resumed the wait is
-  rejected rather than buffered, because the bookmarks are burned on resume. That is the same
-  raise-before-the-wait-is-armed behavior as the row above, and it is loud rather than silent.
-- The Zeebe raise TTL (how long the broker buffers a message before it is silently dropped if it never
-  correlates) defaults to 5 minutes and is now settable on the gateway (`raiseTtl`); size it to your worst-case
-  arm-the-wait latency for a slow-arming flow.
+- On InProc, you can onboard a completed id again as a new generation. On Restate, a key runs one time
+  only. Use the rule of the runtime that you target.
+- On Elsa, make sure that the wait is armed before you raise, or retry the raise. If you need idempotent
+  raises, configure an `IIdempotencyStore`. Elsa is also the one adapter that resolves the raise in the
+  host. The other adapters resolve it in the flow. The cause is that Elsa drives workflow definitions
+  that you write.
+- A raise of an event that the instance already handled runs its `OnEvent` continuation again, under a
+  new sequence. The framework does not remove duplicates by event name. Two raises of one name are two
+  business events. To make one raise idempotent, give it a `raiseId`.
+- On Temporal and Durable Task, the `raiseId` set is for one generation. It resets at continue-as-new.
+  A retried raise that crosses a `Loop` (CAN) boundary can thus arrive two times. If a raise must occur
+  exactly one time across a CAN boundary, control it with a durable effect. The in-memory set is not
+  sufficient for this.
+- At the CAN boundary, Temporal and Durable Task behave in opposite directions. Durable Task does
+  continue-as-new with `preserveUnprocessedEvents: false`. A raise that arrives in the continue-as-new
+  transition window is **dropped**. It does not go into the next generation. This behavior is
+  intentional. If buffered events went forward, the removal of duplicates for each generation would
+  reset. If a raise near a `Loop` must not be lost, make it re-drivable. Raise it again until the flow
+  acknowledges it.
+- For a single active start on Zeebe, use `StartByMessageAsync`. The broker removes duplicates for the
+  TTL. Plain `StartAsync` has no protection against a duplicate start. With plain `StartAsync`, start
+  from a `DeterministicInstanceId` and control re-entry at the seam.
+- Elsa has the same hazard on a plain start by correlation id. Two live instances of one logical id share
+  one key. The first instance to terminate shreds the live data of the other. Control the single active
+  start on Elsa too.
+- A multi-branch wait behaves the same on each runtime that has the portable flow, with one exception.
+  On Restate, a durable promise is write-once for each event NAME for the life of a generation. A branch
+  that can get more than one raise thus delivers only its first raise. An example is a resend button. To
+  get the next raise, the flow must take a `Loop` after it handles the first one. The `Loop` starts a new
+  generation with new promises. The other runtimes consume the delivery and arm the branch again, so a
+  repeated raise at one branch works.
+- On Elsa, a raise can arrive for a branch after another branch has resumed the wait. Elsa rejects this
+  raise and does not buffer it, because resume burns the bookmarks. This is the same as the "raise
+  before the wait is armed" row above. The rejection is visible to the caller.
+- The Zeebe raise TTL is the time for which the broker buffers a message. If the message does not
+  correlate in that time, the broker drops it with no error. The default is 5 minutes. You can set it on
+  the gateway (`raiseTtl`). For a flow that arms its wait slowly, set the TTL to the worst-case time to
+  arm the wait.
 
 ## In-flight evolution
 
-What happens to instances that were already running when you redeploy a changed flow. The full reasoning
-and the store-free pin-and-drain pattern are in [Versioning and evolution](../explanation/versioning-and-evolution.md);
-this is the per-runtime summary.
+This section tells what occurs to in-flight instances when you deploy a changed flow. Each row gives the
+result for one runtime. For the full reasons and the pin-and-drain pattern, which needs no store, see
+[Versioning and evolution](../explanation/versioning-and-evolution.md).
 
 | Runtime | Portable flow | Native flow | Tool for a breaking change |
 |---|---|---|---|
-| InProc | no durability across a restart, so no in-flight question | — | not applicable |
-| Durable Task | safe (step is an activity); in-flight instances roll forward | orchestrator is replayed, no in-code patch API | new orchestration name for the new version; drain the old |
-| Temporal | safe (step is an activity); in-flight instances roll forward | `[Workflow]` is replayed; a control-flow change can throw a non-determinism error | `Workflow.Patched` / `GetVersion`, or Worker Build-ID versioning |
-| Elsa | definitions versioned natively; running instances stay pinned | ← same | publish a new definition version; pin a specific version to hold new starts back |
-| Restate | deployments versioned natively; in-flight invocations stay pinned | ← same | deploy a new sidecar deployment |
-| Camunda 8 / Zeebe | — (native-only) | BPMN definitions versioned natively; running instances stay pinned | new BPMN version, or Camunda process-instance migration |
+| InProc | No durability across a restart, so in-flight instances do not continue after a deploy. | — | not applicable |
+| Durable Task | safe (the step is an activity). In-flight instances roll forward. | The orchestrator is replayed. There is no in-code patch API. | Give the new version a new orchestration name. Drain the old version. |
+| Temporal | safe (the step is an activity). In-flight instances roll forward. | The `[Workflow]` is replayed. A control-flow change can throw a non-determinism error. | `Workflow.Patched` / `GetVersion`, or Worker Build-ID versioning |
+| Elsa | Elsa versions definitions natively. In-flight instances stay pinned. | ← same | Publish a new definition version. Pin a specific version to hold new starts back. |
+| Restate | Restate versions deployments natively. In-flight invocations stay pinned. | ← same | Deploy a new sidecar deployment. |
+| Camunda 8 / Zeebe | — (native flow only) | Zeebe versions BPMN definitions natively. In-flight instances stay pinned. | new BPMN version, or Camunda process-instance migration |
 
-The portable flow rolls forward everywhere it runs, because your step code is off the replay path, so a
-backward-compatible change needs only a redeploy. Where you need old instances never to meet new code,
-give the new version its own instance-id space with a version token in the `DeterministicInstanceId`
-prefix and drain the old one. See [Evolve a running flow](../how-to/evolve-a-running-flow.md) for the
-recipe.
+The portable flow rolls forward on each runtime that runs it. Your step code is off the replay path. A
+backward-compatible change thus needs only a new deploy. If old instances must never run new code, give
+the new version its own instance-id space. Put a version token in the `DeterministicInstanceId` prefix.
+Then drain the old instances. For the procedure, see
+[Evolve a running flow](../how-to/evolve-a-running-flow.md).
 
 ## Step failure, retry, and poison
 
-What happens when a governed step throws. The framework applies one cross-runtime default — a bounded
-retry, then **park-before-shred** — so failure behavior no longer diverges by engine, and a transient
-failure can never destroy the sealed journal. `WorkflowStepOptions` (max attempts, backoff, per-step
-timeout, terminal-exception predicate) is the seam; each adapter maps it onto its engine's native retry
-primitive, and every driver shares one park path (`GovernedTermination.QuarantineAsync`).
+This section tells what occurs when a governed step throws an exception. The framework applies one
+default on all runtimes: a bounded retry, then **park-before-shred**. Failure behavior is thus the same on
+each runtime. A transient failure cannot destroy the sealed journal.
 
-The failure path and the erasure path are distinct. A failing step is **retried** up to the bound; when
-the attempts are spent — or the failure is classified terminal — the instance is **parked**: its key is
-**retained** (recorded in the held registry, `OnRetentionHeld` fired), *not* crypto-shredded. Recovery is
-an audited re-drive (resume) or a deliberate terminate (which then shreds). The key is destroyed only on a
-deliberate termination — a natural completion, or an erasure/force-terminate through the coordinator — never
-on the failure path.
+`WorkflowStepOptions` sets the retry. It holds the maximum number of attempts, the backoff, the timeout
+for each step, and the predicate for a terminal exception. Each adapter maps these options to the retry
+mechanism of its runtime. All drivers use one park path (`GovernedTermination.QuarantineAsync`).
+
+The failure path and the erasure path are different paths:
+
+1. A step that fails gets a **retry**, up to the bound.
+2. When the attempts are used, or when the failure is terminal, the framework **parks** the instance.
+3. A parked instance keeps its key. The framework records the key in the held registry and fires
+   `OnRetentionHeld`. It does *not* crypto-shred the instance.
+4. To recover a parked instance, do an audited re-drive (resume). Alternatively, terminate it
+   intentionally. The termination then shreds it.
+
+The framework destroys the key only on an intentional termination. An intentional termination is a
+natural completion, or an erasure or force-terminate through the coordinator. The failure path never
+destroys the key.
 
 | Behavior | InProc | Durable Task | Temporal | Elsa | Restate | Zeebe |
 |---|---|---|---|---|---|---|
-| **Retry** | driver loop (bounded exponential backoff) | activity `RetryPolicy` (`TaskOptions`) | activity `RetryPolicy` | driver loop | sidecar retry (see caveat) | broker job retries, decremented per failure |
-| **On retries exhausted** | park (key retained, held) | park (quarantine activity) | park (quarantine activity) | park (key retained, held) | incident (see caveat) | broker incident (key retained) |
-| **Default** | 3 attempts, 1s → 2s backoff | ← same | ← same | ← same | see caveat | BPMN task `retries`, then incident |
-| **Per-binding tuning** | `WorkflowStepOptions` on the driver | static default in the orchestration (SDK-constructed) | ← same | `WorkflowStepOptions` on the activity | sidecar config | BPMN `retries` attribute |
+| **Retry** | driver loop (bounded exponential backoff) | activity `RetryPolicy` (`TaskOptions`) | activity `RetryPolicy` | driver loop | sidecar retry (see the caution below) | broker job retries, one less for each failure |
+| **When the retries are used** | park (key kept, held) | park (quarantine activity) | park (quarantine activity) | park (key kept, held) | incident (see the caution below) | broker incident (key kept) |
+| **Default** | 3 attempts, 1s → 2s backoff | ← same | ← same | ← same | see the caution below | BPMN task `retries`, then incident |
+| **Settings for each binding** | `WorkflowStepOptions` on the driver | static default in the orchestration (the SDK constructs it) | ← same | `WorkflowStepOptions` on the activity | sidecar configuration | BPMN `retries` attribute |
 
-The old destructive defaults are gone: Durable Task and Elsa used to crypto-shred the instance key on the
-**first** failure (a transient DB blip permanently erased the flow); Temporal had no retry policy, so the
-server default retried a failing step **forever, silently**. Both are now bounded-retry-then-park.
+Earlier versions had destructive defaults. These defaults are removed:
 
-> **Restate caveat.** The Rust sidecar still retries a failing step with infinite backoff (an HTTP 500 is
-> retried by the Restate runtime) and does not yet drive the park path. Bounding the sidecar retry and
-> wiring park-before-shred there is a tracked follow-up; until then, on Restate a poison step retries
-> indefinitely rather than parking. Wire external stuck-instance alerting on the Restate leg.
+- Durable Task and Elsa did a crypto-shred of the instance key on the **first** failure. A transient
+  database fault thus erased the flow permanently.
+- Temporal had no retry policy. The server default thus retried a step that failed **forever, with no
+  signal**.
 
-> **Per-binding options on the replay engines.** On Durable Task and Temporal the orchestration/workflow is
-> SDK-constructed on the replay path, so it reads the retry policy from a static default rather than a
-> per-binding `WorkflowStepOptions`. Tune the default centrally; per-binding overrides on those two engines
-> are a follow-up. The in-process and Elsa drivers take per-binding options directly.
+Durable Task, Elsa, and Temporal now do a bounded retry, then park.
+
+> [!CAUTION]
+> Configure external alerts for stuck instances on Restate. The Rust sidecar retries a step that fails with
+> infinite backoff. The Restate runtime retries an HTTP 500. The sidecar does not yet drive the park
+> path. A poison step on Restate thus retries for an indefinite time and does not park. A bound on the
+> sidecar retry and park-before-shred on the sidecar are a tracked follow-up.
+
+> **Options for each binding on the replay runtimes.** On Durable Task and Temporal, the SDK constructs
+> the orchestration or workflow on the replay path. It thus reads the retry policy from a static default.
+> It does not read a `WorkflowStepOptions` for each binding. Tune the default in one central place.
+> Overrides for each binding on these two runtimes are a follow-up. The InProc and Elsa drivers take
+> options for each binding directly.
 
 ## Verifying locally
 
-Each runtime is exercised against its backend, so full verification depends on those backends being
-up. A run cannot quietly under-report its coverage, though. The suite is split into a hermetic set and
-a backend-bound set. The hermetic set (in-memory, Temporal's time-skipping environment, and Elsa over
-SQLite) needs no infrastructure and is what a plain run executes; it is genuinely green on a bare
-machine, with no skipped cases hiding behind the result. Every test that needs a real backend is opt-in
-and selected by category, so a run states which backends it covered by the filter it used, and a
-selected backend test that cannot reach its backend fails rather than skipping. In other words, there
-is no silent-skip path that lets a green run certify less than it appears to: either a test was not
-selected (and is absent from the run), or it was selected and had to prove itself against a live
-backend. A failed Restate sidecar build is likewise a hard failure rather than a skip, since a
-present-but-broken sidecar certifies nothing. Bring up the backends listed above (and OpenBao for the
-key-store leg) before selecting their tests.
+The tests run each runtime against the real runtime. Full verification thus needs each runtime to be
+available. A test run always reports its true coverage. The suite has two sets:
 
-For the full setup and the timing traps that otherwise produce false results, see
+- **The hermetic set.** A plain run executes this set. It uses InProc, the in-memory stores, the
+  time-skipping environment of Temporal, and Elsa with its in-memory provider. It needs no
+  infrastructure. On a bare machine, it passes with no skipped cases.
+- **The hermetic Tier-2 set.** These tests use SQLite files, for example Elsa on SQLite, or the Temporal
+  time-skipping server. They need no infrastructure. They are opt-in. You select them with the category
+  `Tier2Hermetic`.
+- **The runtime-bound set.** Each test that needs a real runtime is opt-in. You select these tests by
+  category. The filter of a run thus states which runtimes the run covers.
+
+A selected test that cannot reach its runtime fails. It does not skip. Each test is thus in one of two
+states. Either the run did not select it, and the test is absent from the results. Or the run selected
+it, and the test passed or failed against a live runtime. A failed build of the Restate sidecar is also
+a hard failure. A sidecar that is present but broken certifies nothing.
+
+Before you select the runtime-bound tests, start the runtimes that they use:
+
+- Temporal, on port 7233.
+- The Durable Task Scheduler (DTS) emulator, on port 8080.
+- restate-server, on ports 8088 (ingress) and 9070 (admin). The Restate tests also need `cargo` to build
+  the sidecar.
+- Camunda 8 / Zeebe, on ports 26500 (gRPC) and 8090 (REST).
+- OpenBao, on port 8200, for the key-store tests.
+
+The RavenDB tests use an embedded RavenDB server. They need the RavenDB.Embedded server binaries on the
+machine. `examples/dev/piimaker.sh provision-only` starts these runtimes in Docker.
+
+For the full setup and for the timing traps that can give false results, see
 [Verify it yourself](../how-to/verify-it-yourself.md).
 
 ## See also
 
-- [Triggering reference](triggering.md) — the gateway, sealer, and id types.
-- [Author a native flow](../how-to/author-a-native-flow.md) — the per-runtime recipes.
-- [Versioning and evolution](../explanation/versioning-and-evolution.md) — the reasoning behind the
+- [Triggering reference](triggering.md) — the gateway, the sealer, and the id types.
+- [Author a native flow](../how-to/author-a-native-flow.md) — the procedure for each runtime.
+- [Versioning and evolution](../explanation/versioning-and-evolution.md) — the reasons for the
   in-flight evolution summary above.

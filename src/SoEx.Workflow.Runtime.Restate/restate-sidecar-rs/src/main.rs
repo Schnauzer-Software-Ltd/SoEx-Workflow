@@ -405,13 +405,7 @@ impl OnboardWorkflow for OnboardWorkflowImpl {
                     };
                     let (client, url, token) = (self.client.clone(), self.step_url.clone(), self.token.clone());
                     ctx.run(|| async move {
-                        client
-                            .post(format!("{url}/terminate"))
-                            .bearer_auth(&token)
-                            .json(&term)
-                            .send()
-                            .await?
-                            .error_for_status()?;
+                        call_terminate(&client, &url, &token, &term).await?;
                         Ok(())
                     })
                     .name(format!("terminate-fail-{sequence}"))

@@ -10,7 +10,7 @@ namespace PiiMaker.Hosting;
 /// System.Text.Json, which binds every value to its declared type, so a value whose declared type is
 /// <c>object</c> or an abstract base has to be named up front:
 /// <list type="bullet">
-/// <item>the framework's own — the subject stop in the ambient context and the portable
+/// <item>the framework's own — the <see cref="SubjectContext"/> entry in the ambient context and the portable
 /// <see cref="WorkflowAction"/> variants (<see cref="WorkflowKnownTypes.Framework"/>);</item>
 /// <item>the step commands — each is a closed hierarchy, and the portable flow carries them in
 /// <see cref="WorkflowAction"/>'s <c>object</c> members;</item>

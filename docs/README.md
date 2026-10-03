@@ -3,89 +3,97 @@
 
 # SoEx.Workflow documentation
 
-The documentation follows [Diátaxis](https://diataxis.fr), so it is split into four kinds of material:
-tutorials that teach by building, how-to guides for specific tasks, reference pages for exact facts,
-and explanation pages for the design and its trade-offs. If you're new, do the tutorials first. After
-that, reach for a how-to guide when you have a task in front of you, the reference when you need a
-signature or a per-runtime detail, and the explanations when you want to understand why things work the
-way they do.
+The documentation uses the [Diátaxis](https://diataxis.fr) structure. It has four parts:
+
+- **Tutorials** teach the product. In each tutorial, you build a workflow.
+- **How-to guides** give the procedure for one task.
+- **Reference** pages give the exact facts: signatures, packages, and the behavior of each runtime.
+- **Explanation** pages describe the design and its trade-offs.
+
+If you are new to SoEx.Workflow, do the tutorials first. Then use a how-to guide when you have a task.
+Use the reference when you need a signature or a detail about one runtime. Use the explanations to learn
+the reasons for the design.
 
 ## Tutorials
 
-Complete, runnable examples you can follow end to end.
+Each tutorial is a complete example that you can run from start to end.
 
-- [**1. Build your first workflow**](tutorials/01-your-first-workflow.md) — model an onboarding flow,
-  run it in-process with no infrastructure, and watch it complete. About 15 minutes.
-- [**2. Erase a subject**](tutorials/02-erase-a-subject.md) — extend that workflow, then issue a
-  "forget this person" request and verify that crypto-shred made the data unrecoverable.
+- [**1. Build your first workflow**](tutorials/01-your-first-workflow.md). Make an onboarding flow and
+  run it in-process to completion. It needs no infrastructure. Time: approximately 15 minutes.
+- [**2. Erase a subject**](tutorials/02-erase-a-subject.md). Extend the first workflow. Send a request
+  to forget a person, and make sure that crypto-shred made the data unrecoverable.
 
 ## How-to guides
 
-Task-oriented recipes. Each answers a single "how do I…?" and assumes you've done the tutorials.
+Each guide gives the procedure for one task. The guides assume that you did the tutorials.
 
-- [Choose a consumption model](how-to/choose-a-consumption-model.md) — portable flow vs native flow.
-- [Write a step component](how-to/write-a-step-component.md) — model steps, write the component,
-  implement the erasure events.
-- [Run the portable flow](how-to/run-the-portable-flow.md) — host one component on InProc, Durable
+- [Choose a consumption model](how-to/choose-a-consumption-model.md). Choose the portable flow or a
+  native flow.
+- [Write a step component](how-to/write-a-step-component.md). Make the step DTOs, write the
+  component, and implement the erasure events.
+- [Run the portable flow](how-to/run-the-portable-flow.md). Host one component on InProc, Durable
   Task, Temporal, Elsa, or Restate.
-- [Author a native flow](how-to/author-a-native-flow.md) — author the flow in each runtime's own model.
-- [Drive a flow with a statechart](how-to/drive-a-flow-with-a-statechart.md) — run an XState machine as a
-  step component, on every runtime the portable flow supports.
-- [Evolve a running flow](how-to/evolve-a-running-flow.md) — change a flow that has live instances without
-  breaking them mid-flight.
-- [Trigger flows from outside](how-to/trigger-flows-from-outside.md) — start and raise events on a flow
-  from a webhook that holds only business identity.
-- [Authorize the gateway seam](how-to/authorize-the-gateway-seam.md) — enforce auth at the trigger
-  chokepoint and make instance ids unguessable.
-- [Make crypto-shred durable](how-to/make-crypto-shred-durable.md) — swap in a production key store,
+- [Author a native flow](how-to/author-a-native-flow.md). Write the flow in the model of each runtime.
+- [Drive a flow with a statechart](how-to/drive-a-flow-with-a-statechart.md). Run an XState machine
+  as a step component on each runtime that the portable flow supports.
+- [Evolve a running flow](how-to/evolve-a-running-flow.md). Change a flow that has live instances,
+  and keep those instances in operation.
+- [Trigger flows from outside](how-to/trigger-flows-from-outside.md). Start a flow and raise events on
+  it from a webhook. The webhook holds only business identity.
+- [Authorize the gateway seam](how-to/authorize-the-gateway-seam.md). Apply authorization at the
+  trigger point, and make instance ids impossible to guess.
+- [Make crypto-shred durable](how-to/make-crypto-shred-durable.md). Use a production key store,
   subject index, and idempotency store.
-- [Operate in production](how-to/operate-in-production.md) — the metrics to wire, what to alert on, and how to
+- [Operate in production](how-to/operate-in-production.md). Connect the metrics, set the alerts, and
   recover a held instance.
-- [Run erasure maintenance](how-to/run-erasure-maintenance.md) — the sweep, held re-drive, and deadline
-  review that close the gaps over time.
-- [Choose a message serializer](how-to/choose-a-serializer.md) — run on System.Text.Json or BoundJson,
-  and the types you must declare to do it.
-- [Customize PII detection](how-to/customize-pii-detection.md) — plug in a stricter subject matcher.
-- [Secure a PII deployment](how-to/secure-a-pii-deployment.md) — the pre-production checklist of obligations
-  the threat model leaves to you: keys, clear-journaled values, telemetry, transport, gateway auth, ops.
-- [Verify it yourself](how-to/verify-it-yourself.md) — reproduce the behaviour with the examples, and
-  the environment and timing traps that otherwise produce false results.
+- [Run erasure maintenance](how-to/run-erasure-maintenance.md). Run the sweep, the held re-drive, and
+  the deadline review. Together, they close the gaps over time.
+- [Choose a message serializer](how-to/choose-a-serializer.md). Run on System.Text.Json or BoundJson,
+  and declare the types that each one needs.
+- [Customize PII detection](how-to/customize-pii-detection.md). Add a stricter subject matcher. PII is
+  personally identifiable information.
+- [Secure a PII deployment](how-to/secure-a-pii-deployment.md). Use the checklist before production.
+  It lists the obligations that the threat model gives to you: keys, values in the journal in clear
+  text, telemetry, transport, gateway authorization, and operations.
+- [Verify it yourself](how-to/verify-it-yourself.md). Reproduce the behavior with the examples. The
+  guide also lists the environment and timing traps that can give false results.
 
 ## Reference
 
-Exact signatures, packages, and per-runtime behavior.
+These pages give the exact signatures, the packages, and the behavior of each runtime.
 
-- [Packages](reference/packages.md) — what each NuGet package ships.
-- [The governed core](reference/governed-core.md) — `GovernedStep`, `GovernedTermination`, `StepContext`,
-  wiring.
-- [`WorkflowAction`](reference/workflow-action.md) — the portable-model vocabulary.
-- [Erasure events](reference/erasure-events.md) — `IErasureEvent` and its context types.
-- [Erasure API](reference/erasure-api.md) — `ErasureCoordinator`, the sweep, and maintenance.
-- [Governance services](reference/governance-services.md) — key store, subject index, idempotency store.
-- [Triggering](reference/triggering.md) — `IWorkflowGateway`, `WorkflowSealer`, `DeterministicInstanceId`,
-  and the `IWorkflowUtility` face a Manager proxies to.
-- [Runtime matrix](reference/runtime-matrix.md) — how the model maps to each runtime, and where their
-  semantics diverge.
-- [Transport security](reference/transport-security.md) — the in-flight companion to crypto-shred: what
-  crosses each network hop, and how to put TLS on it.
-- [Glossary](reference/glossary.md) — the terms these docs use, defined.
+- [Packages](reference/packages.md). The contents of each NuGet package.
+- [The governed core](reference/governed-core.md). `GovernedStep`, `GovernedTermination`,
+  `StepContext`, and the wiring.
+- [`WorkflowAction`](reference/workflow-action.md). The vocabulary of the portable flow.
+- [Erasure events](reference/erasure-events.md). `IErasureEvent` and its context types.
+- [Erasure API](reference/erasure-api.md). `ErasureCoordinator`, the sweep, and maintenance.
+- [Governance services](reference/governance-services.md). The key store, the subject index, and the
+  idempotency store.
+- [Triggering](reference/triggering.md). `IWorkflowGateway`, `WorkflowSealer`,
+  `DeterministicInstanceId`, and the `IWorkflowUtility` interface that a Manager calls through a proxy.
+- [Runtime matrix](reference/runtime-matrix.md). How the model maps to each runtime, and where the
+  semantics of the runtimes are different.
+- [Transport security](reference/transport-security.md). The data that crosses each network hop, and
+  how to put TLS on it. This page covers data in transit. Crypto-shred covers data at rest.
+- [Glossary](reference/glossary.md). The definitions of the terms in these docs.
 
 ## Explanation
 
-The reasoning behind the design.
+These pages give the reasons for the design.
 
-- [The architect's view](explanation/the-architects-view.md) — for the IDesign Method architect: where
-  SoEx.Workflow fits, starting at the Workflow utility and the binding. Read this first if you're
-  integrating it into an existing system.
-- [Consumption models](explanation/consumption-models.md) — the two models, the shared governed core,
-  and why there's no migration between them.
-- [Crypto-shred and erasure](explanation/crypto-shred-and-erasure.md) — why erasure is key destruction,
-  what is sealed vs guarded, and the threat model.
-- [Governance design](explanation/governance-design.md) — the per-instance key, subject index, and
-  idempotency, and why those three.
-- [The triggering seam](explanation/the-triggering-seam.md) — deterministic ids, sealing without the
-  endpoint, and the authorization chokepoint.
-- [Runtimes and durability](explanation/runtimes-and-durability.md) — the four durability models and
-  why the runtimes don't all behave the same.
-- [Versioning and evolution](explanation/versioning-and-evolution.md) — what happens to in-flight
-  instances when you change a flow and redeploy, on each runtime.
+- [The architect's view](explanation/the-architects-view.md). This page is for the IDesign Method
+  architect. It shows the position of SoEx.Workflow in a system, from the Workflow utility and the
+  binding. If you add SoEx.Workflow to an existing system, read this page first.
+- [Consumption models](explanation/consumption-models.md). The two models, the shared governed core,
+  and the reason that an instance cannot migrate between the models.
+- [Crypto-shred and erasure](explanation/crypto-shred-and-erasure.md). The reason that erasure
+  destroys a key, the data that is sealed and the data that is guarded, and the threat model.
+- [Governance design](explanation/governance-design.md). The per-instance key, the subject index, and
+  idempotency, and the reason for these three parts.
+- [The triggering seam](explanation/the-triggering-seam.md). Deterministic ids, sealing without the
+  endpoint, and the authorization point.
+- [Runtimes and durability](explanation/runtimes-and-durability.md). The four durability models, and
+  the reasons for the differences in behavior between the runtimes.
+- [Versioning and evolution](explanation/versioning-and-evolution.md). What occurs on each runtime to
+  in-flight instances when you change a flow and deploy it again.

@@ -1,19 +1,27 @@
 > [!IMPORTANT]
 > This file was LLM generated and is pending editing by the project maintainer.
 
-# Reference — the governed core
+# Reference: the governed core
 
-The `SoEx.Workflow` types that both consumption models build on. Namespaces: `SoEx.Workflow` (core),
-`SoEx.Workflow.Runtime.InMemory` (in-process impls), and `SoEx.Transport.Workflow` (the workflow binding,
-transport, channel, endpoint and `WorkflowListeners` — shipped as the `SoEx.Transport.Workflow`
-package, alongside the other `SoEx.Transport.*` transports).
+The governed core is the set of `SoEx.Workflow` types that both consumption models use. The types are in
+three namespaces:
+
+- `SoEx.Workflow`: the core types.
+- `SoEx.Workflow.Runtime.InMemory`: the in-process implementations.
+- `SoEx.Transport.Workflow`: the workflow binding, transport, channel, endpoint, and `WorkflowListeners`.
+  The `SoEx.Transport.Workflow` package contains this namespace. It is one of the `SoEx.Transport.*`
+  transports.
 
 ## `GovernedStep<I>`
 
-Wraps one dispatch of your step component through the SoEx pipeline (endpoint pipeline →
-`DefaultDispatcher` → `component.<op>(typedDto)`), minting the per-instance key, indexing the subject,
-and, when an idempotency store is wired, collapsing at-least-once redelivery on the
-`(InstanceId, DtoType, Sequence)` triple.
+`GovernedStep<I>` dispatches your step component one time through the SoEx pipeline. The path is: endpoint
+pipeline → `DefaultDispatcher` → `component.<op>(typedDto)`. For each step, `GovernedStep<I>` does these
+operations:
+
+- It mints the per-instance key.
+- It indexes the subject.
+- If you wire an idempotency store, it applies each step effect one time for each
+  `(InstanceId, DtoType, Sequence)` triple. An at-least-once redelivery then has no second effect.
 
 ```csharp
 public GovernedStep<I>(
@@ -28,39 +36,64 @@ public GovernedStep<I>(
 
 | Member | Description |
 |---|---|
-| `Task<T> ExecuteAsync<T>(StepContext context, object stepDto, byte[]? sealedEventData = null)` | Dispatch one governed step; returns the component's typed result `T`. A native flow that awaited an event passes the sealed data it received, and the step operation's second parameter receives it. |
-| `byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null)` | Mint the key (on first use) and seal a step DTO under it. Returns the sealed seed/payload. |
-| `byte[] SealEventData(string instanceId, object eventData)` | Mint the key and seal raise-time event *data* under it — the form a raiser uses to feed the flow's own declared continuation rather than to supply the next step. Refused unless the step operation declares a parameter to receive it. |
-| `bool AcceptsEventData` | Whether the step operation declares that second parameter. |
-| `T UnsealStep<T>(string instanceId, byte[] sealed)` | Decrypt a sealed payload back to a typed DTO (key must be live). |
-| `byte[] AmbientOf(string instanceId, byte[] sealed)` | Recover the ambient bytes from a sealed payload (throws `InvalidOperationException` once the key is shredded). |
-| `byte[]? EnrollSubjects(string instanceId, byte[]? ambient, WorkflowAction action)` | Fold the subjects an action declared into the step's context: index them now, and return the ambient every continuation is then sealed with. Portable drivers call this after the step returns and before guarding or flattening. See [`WorkflowAction`](workflow-action.md#enrolling-a-subject-the-step-learned). |
-| `IMessageSerializer Serializer` | The serializer this step was built with. |
+| `Task<T> ExecuteAsync<T>(StepContext context, object stepDto, byte[]? sealedEventData = null)` | Dispatches one governed step and returns the typed result `T` of the component. A native flow that received an event gives the sealed data here. The second parameter of the step operation receives that data. |
+| `byte[] SealStep(string instanceId, object stepDto, byte[]? ambientContext = null)` | Mints the key on first use and seals a step DTO with it. Returns the sealed seed or payload. |
+| `byte[] SealEventData(string instanceId, object eventData)` | Mints the key and seals raise-time event data with it. A raiser uses this form to give data to the continuation that the flow declared. The method refuses the call if the step operation has no parameter for event data. |
+| `bool AcceptsEventData` | Is `true` if the step operation declares the second parameter. |
+| `T UnsealStep<T>(string instanceId, byte[] sealed)` | Decrypts a sealed payload to a typed DTO. The key must be live. |
+| `byte[] AmbientOf(string instanceId, byte[] sealed)` | Gets the ambient bytes from a sealed payload. Throws `InvalidOperationException` after the crypto-shred of the key. |
+| `byte[]? EnrollSubjects(string instanceId, byte[]? ambient, WorkflowAction action)` | Adds the subjects that an action declared to the subject context of the step. It indexes them immediately. It returns the ambient bytes that seal each continuation after this step. Portable drivers call this method after the step returns and before they guard or flatten the action. See [`WorkflowAction`](workflow-action.md#enrolling-a-subject-the-step-learned). |
+| `IMessageSerializer Serializer` | The serializer of this step. |
 
-`operationName` selects the step operation when the contract has more than one; omit it for a
-single-operation contract. `subjectMatcher` overrides the clear-text guard — see
+`operationName` selects the step operation when the contract has more than one operation. For a contract
+with one operation, omit it. `subjectMatcher` replaces the default clear-text guard. See
 [Customize PII detection](../how-to/customize-pii-detection.md).
 
-A step operation takes its step DTO, optionally followed by the event data a raise may carry. Any other
-parameter count is rejected when the `GovernedStep` is built rather than on the first step of a live
-instance: the framework constructs the argument array itself and has nothing to put in a third slot.
+A step operation has one or two parameters. The first parameter is the step DTO. The optional second
+parameter is the event data that a raise can carry. The framework makes the argument array, and it has
+values for these two slots only. Thus, if a step operation has a different number of parameters, the
+constructor of `GovernedStep` rejects it. This check occurs when you build the `GovernedStep`, before the
+first step of a live instance.
 
-`GovernedStep<I>` also exposes a non-generic `IGovernedStep` facet (instance id / result / visible-name
-guards, `SealStep`, `SealEventData`, `AmbientOf`, `EnrollSubjects`, `Serializer`). This is the type the shipped
-host builders accept, so a host that drives several entrypoints can hold them uniformly.
+`GovernedStep<I>` also has a non-generic facet, `IGovernedStep`. This facet contains these members:
 
-**Guard scope.** The default substring matcher catches a known subject id appearing literally in a
-runtime-visible name or a serialized result. It is a safety net rather than general PII detection: the
-byte-path scan folds ASCII case (so a re-cased id is still caught), but a serializer that escapes
-characters as `\uXXXX` breaks the literal-byte match, and an unknown or derived PII value is not a known
-subject. Plug in a stricter `subjectMatcher` (regex/NER/denylist) where that matters; the in-clear surfaces it guards
-(instance id, step results, event/timer names) are listed per adapter in the
-[runtime matrix](runtime-matrix.md).
+- the guards for the instance id, the result, and the visible names
+- `SealStep`
+- `SealEventData`
+- `AmbientOf`
+- `EnrollSubjects`
+- `Serializer`
+
+The shipped host builders accept `IGovernedStep`. Thus, a host that drives many entrypoints can keep all
+of them as one type.
+
+### Scope of the guard
+
+The default matcher finds a known subject id when the id occurs literally as a substring. It examines
+runtime-visible names and serialized results. The scan on the byte path ignores ASCII case, so it also
+finds an id in a different case. These limits apply to the default matcher:
+
+- If a serializer escapes characters as `\uXXXX`, the literal byte match fails.
+- The matcher finds known subjects only. It does not find an unknown PII value or a value derived from PII.
+
+The default matcher is a safety net for known subjects. If you need stricter detection, give a stricter
+`subjectMatcher`, for example a regex, NER, or a denylist. For each adapter, the
+[runtime matrix](runtime-matrix.md) lists the clear-text values that the guard examines. These values
+include the instance id, the workflow result, and the event names of a portable wait. A timer has a
+duration and no name, so the guard has no timer value to examine. See
+[what is sealed vs guarded](../explanation/crypto-shred-and-erasure.md#what-is-sealed-vs-guarded) for the
+full list.
 
 ## `GovernedTermination`
 
-Runs the termination erasure lifecycle: `OnRetaining` → destroy the key (crypto-shred) → prune the subject
-index → `OnTerminated`, or → `OnRetentionHeld` on extraction failure.
+`GovernedTermination` runs the termination lifecycle for erasure. The sequence is:
+
+1. `OnRetaining`.
+2. Destroy the key (crypto-shred).
+3. Prune the subject index.
+4. `OnTerminated`.
+
+If the extraction fails, the lifecycle goes to `OnRetentionHeld` after `OnRetaining`.
 
 ```csharp
 public GovernedTermination(
@@ -72,48 +105,58 @@ public GovernedTermination(
 public Task<TerminationOutcome> TerminateAsync(string instanceId, IdempotencyKey idempotencyKey, TerminationTrigger trigger);
 ```
 
-`TerminationTrigger` distinguishes a natural completion from a forced erasure. `TerminationOutcome` is
-`Terminated` (key destroyed, index pruned) or `Held` (retention extraction failed past the retry
-boundary, so the key is retained for an audited re-drive).
+`TerminationTrigger` identifies the cause of the termination: a natural completion or a forced erasure.
+`TerminationOutcome` has two values:
+
+- `Terminated`: the framework destroyed the key and pruned the index.
+- `Held`: the retention extraction failed after the retry limit. The framework keeps the key for an
+  audited re-drive.
 
 ## `StepContext`
 
-Carries the durable identity into `ExecuteAsync`.
+`StepContext` gives the durable identity of the step to `ExecuteAsync`.
 
 ```csharp
 public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null);
 ```
 
-`InstanceId` and `Sequence` come from the backend's own context. The same `(InstanceId, Sequence)` keys
-the idempotency triple, so a redelivered step applies its effect once.
+`InstanceId` and `Sequence` come from the context of the runtime. `(InstanceId, Sequence)` is also part of
+the idempotency triple. Thus, a redelivered step applies its effect one time.
 
 ## `StepMetadata`
 
-The framework-understood facts of a step, extracted from the envelope without interpreting your payload:
-`InstanceId`, `Sequence`, `DtoType`, `SubjectIds`, `WorkflowManaged`, and the `IdempotencyKey` triple.
+`StepMetadata` contains the step facts that the framework uses. The framework reads them from the envelope
+and does not interpret your payload. The facts are `InstanceId`, `Sequence`, `DtoType`, `SubjectIds`,
+`WorkflowManaged`, and the `IdempotencyKey` triple.
 
 ## Hosting types
 
 | Type | Description |
 |---|---|
-| `WorkflowBinding<I>(string name)` | An ordinary SoEx binding that hosts your step component; put it in your topology. |
-| `WorkflowListeners` | Collects endpoints as the host starts; `ForAddress(binding.Transport.Address.Uri)` returns the bound `IWorkflowDispatch`. |
-| `WorkflowRegistration.RequireErasureEvent(Type)` | Throws at wiring time if the component doesn't implement `IErasureEvent`. |
-| `WorkflowEnvelope.AmbientFor(IMessageSerializer, SubjectContext?)` | Builds the ambient bytes carrying a subject. Returns `byte[]?`. |
-| `WorkflowKnownTypes.Framework` | The framework types to declare to the host's serializer, alongside your own step DTOs. See [choose a serializer](../how-to/choose-a-serializer.md). |
+| `WorkflowBinding<I>(string name)` | A standard SoEx binding that hosts your step component. Put it in your topology. |
+| `WorkflowListeners` | Collects the endpoints when the host starts. `ForAddress(binding.Transport.Address.Uri)` returns the bound `IWorkflowDispatch`. |
+| `WorkflowRegistration.RequireErasureEvent(Type)` | Throws at wiring time if the component does not implement `IErasureEvent`. |
+| `WorkflowEnvelope.AmbientFor(IMessageSerializer, SubjectContext?)` | Makes the ambient bytes that carry a subject. Returns `byte[]?`. |
+| `WorkflowKnownTypes.Framework` | The framework types that you declare to the serializer of the host, together with your step DTOs. See [choose a serializer](../how-to/choose-a-serializer.md). |
 
 ## The wiring sequence
 
-Host the component, start the host, resolve the endpoint, then build the two governed types:
+The wiring sequence has five parts. Do them in this order:
+
+1. Host the component.
+2. Start the host.
+3. Resolve the endpoint.
+4. Build the `GovernedStep`.
+5. Build the `GovernedTermination`.
 
 ```csharp
 IInstanceKeyStore keys  = new InMemoryInstanceKeyStore();
 ISubjectIndex     index = new InMemorySubjectIndex();
 IIdempotencyStore idem  = new InMemoryIdempotencyStore();
-var component = new OnboardSteps();
+var component = new OnboardManager();
 
 var listeners = new WorkflowListeners();
-var binding   = new WorkflowBinding<IOnboardSteps>("onboarding");
+var binding   = new WorkflowBinding<IOnboardManager>("onboarding");
 var services  = new ServiceCollection();
 services.AddSingleton(listeners);
 services.AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
@@ -133,21 +176,21 @@ IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address.Uri)
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
 WorkflowRegistration.RequireErasureEvent(component.GetType());
-var step     = new GovernedStep<IOnboardSteps>(endpoint, serializer, idem, keys, index);
+var step     = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
 var termination = new GovernedTermination(component, keys, index);
 ```
 
-Resolve the endpoint only after `host.Start()`. The snippet above is the whole composition (guard
-included); the private test suite wraps exactly this into a helper that returns `(step, termination)`.
+Resolve the endpoint only after `host.Start()`. The snippet is the full composition, and it includes the
+guard. The private test suite puts this composition into a helper that returns `(step, termination)`.
 
-The pipeline is implicit here, so this composes on the stock `DefaultPipeline` and its System.Text.Json
-serializer, which is why the known types are passed. To run on another serializer, pass a pipeline as well —
-`builder.SoEx(topology, knownTypes, pipeline)` — as
-[choose a message serializer](../how-to/choose-a-serializer.md) sets out.
+The snippet gives no pipeline. Thus, the composition uses the stock `DefaultPipeline` and its
+System.Text.Json serializer. For this reason, the snippet gives the known types. To use a different
+serializer, also give a pipeline: `builder.SoEx(topology, knownTypes, pipeline)`. See
+[choose a message serializer](../how-to/choose-a-serializer.md).
 
-## See also
+## Related pages
 
-- [Governance services](governance-services.md) — `IInstanceKeyStore`, `ISubjectIndex`,
+- [Governance services](governance-services.md): `IInstanceKeyStore`, `ISubjectIndex`,
   `IIdempotencyStore`.
-- [Erasure events](erasure-events.md) — `IErasureEvent` and its context types.
-- [`WorkflowAction`](workflow-action.md) — the portable-model return value.
+- [Erasure events](erasure-events.md): `IErasureEvent` and its context types.
+- [`WorkflowAction`](workflow-action.md): the return value of the portable model.

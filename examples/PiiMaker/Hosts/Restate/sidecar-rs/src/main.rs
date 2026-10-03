@@ -498,8 +498,8 @@ async fn main() {
     let step_url = std::env::var("STEP_URL").unwrap_or_else(|_| "http://127.0.0.1:9091".to_string());
     // The portable flow calls its own /step+/terminate host; the native services call /gov-step. A host that
     // drives them concurrently (the web control panel) keeps the two .NET callback hosts on separate ports, so
-    // PORTABLE_STEP_URL overrides where MembershipPortable calls back (defaults to STEP_URL when unset, which
-    // is how the single-flow-at-a-time scripted host runs).
+    // PORTABLE_STEP_URL overrides where MembershipPortable calls back (defaults to STEP_URL when unset, for a
+    // host that serves /step and /gov-step from one callback host).
     let portable_step_url = std::env::var("PORTABLE_STEP_URL").unwrap_or_else(|_| step_url.clone());
     let bind = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:9081".to_string());
     let token = std::env::var("STEP_TOKEN").expect("STEP_TOKEN must be set (shared secret for the .NET step host)");

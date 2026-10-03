@@ -3,99 +3,110 @@
 
 # The triggering seam
 
-Workflows are rarely driven by the code that started them. A webhook from an identity provider says
-"this account was verified"; a payment processor says "this card was updated". These callers hold only
-business identity (an org and an email, a subscriber id), with no instance handle, no flow knowledge,
-and no key material. The triggering seam is what lets such a caller start and steer a flow. This page
-explains its design and its guarantees. For the how-to, see
+The triggering seam lets an outside caller start and steer a flow. Usually, code other than the code
+that started a workflow drives it. Two examples:
+
+- A webhook from an identity provider says "this account was verified".
+- A payment processor says "this card was updated".
+
+Such a caller holds only business identity, for example an org and an email, or a subscriber id. It
+holds no instance handle, no flow knowledge, and no key material. This page describes the design of the
+seam and its guarantees. For the procedure, see
 [Trigger flows from outside](../how-to/trigger-flows-from-outside.md).
 
-## The problem: identity, not handles
+## Business identity as the key
 
-A naive trigger API would hand the caller an instance id when the flow starts and expect them to keep
-it. That falls apart immediately: the webhook that fires months later never saw the start, and the
-payment callback runs in a different system. What every caller does share is the business identity of
-the subject, so the seam is built to need only that.
+The seam needs only the business identity of the subject. All callers share this identity. An instance
+id that the start gives to one caller does not reach the other callers. A webhook that fires months
+later never saw the start. A payment callback runs in a different system.
 
 ## Deterministic ids
 
-`DeterministicInstanceId.For(prefix, parts...)` turns a business identity into an instance id by hashing
-it. Because it's a pure function, the code that starts the flow and the webhook that continues it derive
-the same id from the same identity, with no lookup table, shared store, or handoff; the identity itself
-is the only state involved.
+`DeterministicInstanceId.For(prefix, parts...)` hashes a business identity into an instance id. It is a
+pure function. Thus the code that starts the flow and the webhook that continues it derive the same id
+from the same identity. No lookup table, shared store, or handoff is necessary. The identity is the only
+state.
 
-The id is also PII-free by construction (it's a hash, not the email), which matters because instance ids
-are journaled in clear and would otherwise leak the subject.
+The id is a hash of the identity, so it contains no PII. This is important because the journal keeps
+instance ids in clear text. An id that contained the email would leak the subject.
 
 ### Confirmable vs unguessable
 
-There is a tension here. The unkeyed `For` is an unsalted hash truncated to 128 bits: deterministic,
-non-secret, and therefore confirmable. Anyone holding a candidate identity can re-derive the id and
-check it. That's what makes the start and continue sides agree without coordination, but it also means
-the id alone is not a secret.
+The unkeyed `For` is an unsalted hash truncated to 128 bits. It is deterministic and not secret, and
+thus confirmable. A person who holds a candidate identity can derive the id again and check it. This
+property lets the start side and the continue side agree with no coordination. It also means that the
+id alone is not a secret.
 
-When you need the id to be unguessable by someone who knows the identity,
-`DeterministicInstanceId.Keyed` derives it under a shared secret (HMAC-SHA256): still deterministic for
-callers holding the secret, but not derivable or confirmable without it. The trade-off is distribution,
-because every start/continue caller now needs the secret. Where that's impossible, the confirmable `For`
-remains the pragmatic choice, and you lean on the authorization and cryptographic protections below.
+`DeterministicInstanceId.Keyed` derives the id under a shared secret (HMAC-SHA256). Use it when a person
+who knows the identity must not be able to guess the id. The id stays deterministic for callers that
+hold the secret. Without the secret, nobody can derive or confirm the id. Thus each start caller and
+each continue caller must have the secret. If you cannot distribute the secret, use the confirmable
+`For`. Then rely on the authorization and cryptographic protections below.
 
-## Sealing without the endpoint
+## Seal without the endpoint
 
-Starting a flow needs a sealed seed, but the component reacting to a trigger is often the very component
-the governed step dispatches into, so it can't also hold the dispatch endpoint. `WorkflowSealer` exists
-to break that circularity. It is the seal side alone (key store + serializer + the operation name), so
-trigger code can mint a seed without holding the machinery that runs it.
+The start of a flow needs a sealed seed. The component that reacts to a trigger is often the component
+that the governed step dispatches into. That component cannot also hold the dispatch endpoint.
+`WorkflowSealer` breaks this circular dependency. It is the seal side alone: the key store, the
+serializer, and the operation name. Trigger code uses it to mint a seed. Trigger code does not hold the
+machinery that runs the seed.
 
-## One interface, different semantics per engine
+## One interface, different semantics per runtime
 
-`IWorkflowGateway` gives start and raise a uniform shape across every adapter, and the happy path
-behaves identically (a conformance test enforces that). But two edge behaviors differ per engine:
-whether a duplicate start throws, no-ops, or starts a second run, and whether a raise that arrives
-before its wait is buffered or dropped. The docs surface this divergence rather than papering over it
-(see the [gateway-semantics matrix](../reference/runtime-matrix.md#gateway-semantics)): an abstraction
-that is known to leak is safer than one you wrongly assume is watertight. Design your caller for the
-engine you target, or keep strictly to the happy path.
+`IWorkflowGateway` gives start and raise one shape on each adapter. On the happy path, all adapters
+behave the same, and a conformance test enforces this. Two edge behaviors are different for each
+runtime:
+
+- A duplicate start throws, does nothing, or starts a second run.
+- A raise that arrives before its wait is buffered or dropped.
+
+The [gateway-semantics matrix](../reference/runtime-matrix.md#gateway-semantics) gives the behavior of
+each runtime. An abstraction with known leaks is safer than an abstraction that you wrongly think has
+none. Design your caller for the runtime that you target, or use only the happy path.
 
 ## Bare events
 
-A bare "this happened" raise carries no payload, so how does the flow know what to do? A portable wait
-can pre-decide: each branch of a `WaitForEvent` carries an `OnEvent` continuation (the branch-level twin
-of `OnTimeout`), sealed at wait time and journaled. The bare raise then resumes the wait into the step
-that branch pre-sealed. This is what lets a webhook raise an event at a flow with no flow knowledge and
-no key material at all.
+A bare raise says "this happened" and carries no payload. A portable wait decides in advance what the
+flow does next. Each branch of a `WaitForEvent` carries an `OnEvent` continuation. `OnEvent` is the
+branch-level equivalent of `OnTimeout`. The framework seals the continuation at wait time and journals
+it. The bare raise then resumes the wait into the step that the branch sealed in advance. Thus a webhook
+can raise an event at a flow with no flow knowledge and no key material.
 
-Data-carrying events work differently from how you might expect, and deliberately so. A raise that carries
-data does not replace the branch's continuation — it runs alongside it, reaching the step operation as a
-second argument. The division is: the flow decides *what happens next*, because only the flow knows its own
-state; the raiser supplies *what it knows*, because only the raiser knows that. Letting a payload become the
-next step would require the outside world to construct the flow's internal state, which is possible for a
-simple saga and impossible once that state is something like a statechart snapshot. A branch that declares
-no continuation still accepts a payload as the next step, for the cases where the raiser genuinely is the
-one deciding.
+A raise that carries data keeps the continuation of the branch. The continuation runs, and the data
+reaches the step operation as a second argument. The two parties have these responsibilities:
 
-A wait can name several events, each with its own continuation, all racing the timer. That matters for
-the seam because callers are usually different systems: an identity provider confirming a verification
-and an operator pressing resend both raise at the same parked instance, and giving them one event name
-each is what stops one from consuming the other's raise.
+- The flow decides what happens next, because only the flow knows its own state.
+- The raiser supplies what it knows, because only the raiser knows that.
+
+If a payload became the next step, the outside world would have to construct the internal state of the
+flow. That is possible for a simple saga. It is impossible when the state is, for example, a statechart
+snapshot. A branch that declares no continuation accepts a payload as the next step. Use this for the
+cases where the raiser decides what happens next.
+
+A wait can name several events. Each event has its own continuation, and all of them race the timer.
+This is important for the seam because the callers are usually different systems. For example, an
+identity provider confirms a verification, and an operator presses resend. Both raise at the same
+parked instance. Give each caller its own event name. Then one caller cannot consume the raise of the
+other caller.
 
 ## Two lines of defense
 
-The seam separates two concerns that are easy to conflate.
+The seam keeps two concerns separate: authorization and cryptographic integrity.
 
-Authorization is policy, and the framework can't know your policy, so the gateway makes no access
-decision of its own. What it provides is the chokepoint: supply an `IGatewayAuthorizer` and every start
-and raise on every adapter consults it first. That turns "enforce auth somewhere upstream" into "enforce
-auth in exactly one place", which is far easier to get right. The authorizer runs where the gateway
-runs, so you still front the ingress at your edge; this is defense in depth.
+Authorization is policy. The framework does not know your policy, so the gateway makes no access
+decision of its own. The gateway gives you one place to enforce authorization. If you supply an
+`IGatewayAuthorizer`, each start and each raise on each adapter calls it first. The authorizer runs
+where the gateway runs. Also put a control on the ingress at your edge. Together, these two controls
+give defense in depth.
 
-Cryptographic integrity is something the framework can guarantee, and does: anything a raise carries —
-a continuation or event data — is sealed under the per-instance key with the instance id bound in as
-associated data (AAD). A payload forged for one instance, or replayed against another, fails at decrypt,
-because the AAD bind makes the ciphertext inseparable from its instance. A bare (payloadless) event carries
-no such proof, which is why authorization in front of it matters.
+The framework guarantees cryptographic integrity. A raise can carry one of two payloads. At a branch
+that declares an `OnEvent`, the payload is event data. At a branch that declares no `OnEvent`, the
+payload is the next step. The framework seals each payload with the per-instance key. The instance id is bound in as associated data
+(AAD). If a payload is forged for one instance, or replayed against another, decryption fails. The AAD
+binding makes the ciphertext inseparable from its instance. A bare event carries no payload, so it
+carries no such proof. Thus authorization in front of a bare event is important.
 
 ## See also
 
-- [Authorize the gateway seam](../how-to/authorize-the-gateway-seam.md) — the practical wiring.
-- [Triggering reference](../reference/triggering.md) — the exact types.
+- [Authorize the gateway seam](../how-to/authorize-the-gateway-seam.md) gives the wiring procedure.
+- [Triggering reference](../reference/triggering.md) describes the types.

@@ -1,100 +1,122 @@
 > [!IMPORTANT]
 > This file was LLM generated and is pending editing by the project maintainer.
 
-# How-to — verify it yourself
+# Verify it yourself
 
-You don't need the project's own test suite to reproduce what SoEx.Workflow does. The public
-[`examples/`](../../examples) are a complete, runnable consumer composition (a SoEx system wired onto
-all six runtimes), so you can exercise the behaviour end to end and judge the guarantees for yourself.
+The public [`examples/`](../../examples) folder is a complete consumer composition that you can run. It
+wires a SoEx system onto all six runtimes. Use it to test the behavior of SoEx.Workflow from end to end
+and to judge its guarantees.
 
-This guide covers setup and the non-obvious traps. It doesn't tell you what to verify; that's your
-call, and the [explanations](../README.md#explanation) describe what each guarantee means. Its job is
-to make sure that whatever you check, the result means what you think it means: that a green run didn't
-quietly skip the thing you cared about, and a red run isn't just a backend that wasn't ready.
+This guide gives the setup and the traps that can give a false result. You decide what to verify. The
+[explanations](../README.md#explanation) tell what each guarantee means. This guide helps you read each
+result correctly. A pass must include the paths that you care about. A failure can come from a server that
+was not ready, so check for that first.
 
 ## What to run
 
-- The example hosts. `examples/PiiMaker/Hosts/<Runtime>` each stand up the same consumer system as a
-  small web control panel and expose plain HTTP (`POST /IMembershipManager/…`, `GET /example/status/{id}`
-  returning `{keyLive}`, `POST /example/erase`, `GET /example/host`). Drive them however you like.
-- A worked end-to-end exercise.
-  [`examples/dev/smoke-all-hosts.sh`](../../examples/dev/smoke-all-hosts.sh) runs one full path — start
-  an instance, observe its per-instance key, request erasure, observe the key gone — across every
-  runtime, and is written to survive the timing traps below. It's a starting point you can read and
-  adapt, not the limit of what's worth checking.
-- Builds: `dotnet build SoEx.Workflow.sln` and `examples/SoEx.Workflow.Examples.sln`. If you exercise
-  Restate, also `cargo build --release` in `src/SoEx.Workflow.Runtime.Restate/restate-sidecar-rs` (see trap 1).
+1. Build the product: `dotnet build SoEx.Workflow.sln`.
+2. Build the examples: `dotnet build examples/SoEx.Workflow.Examples.sln`.
+3. If you test Restate, build the example sidecar in `examples/PiiMaker/Hosts/Restate/sidecar-rs`.
 
-## Coverage depends on which backends are up
+   Use `cargo build --release`. The Restate example host builds this sidecar only when the binary is
+   absent. See trap 1. The framework sidecar in `src/SoEx.Workflow.Runtime.Restate/restate-sidecar-rs`
+   is a different binary. The example hosts do not use it.
+4. Start the example hosts that you need.
 
-InProc needs no infrastructure but exercises the least. Every durable runtime is only exercised when
-its backend is running, so a green result on a bare machine certifies a reduced subset, not the whole
-thing. Any report should account for this. An absence of failures with backends down is not full
-verification, just silence about the paths you didn't run, so say which backends were up: "passed"
-means very different things with and without Temporal, Durable Task, Restate, Camunda 8, and a durable
-key store present.
+   Each `examples/PiiMaker/Hosts/<Runtime>` folder starts the same consumer system as a small web control
+   panel. Each host gives these plain HTTP endpoints:
 
-> One "hermetic" caveat: the Temporal time-skipping tests use Temporal's test server, which the SDK
-> **downloads on first use**, so the first run on a fresh machine needs network access even though the tests
-> need no running Temporal server. Later runs use the cached binary and are offline.
+   - `POST /IMembershipManager/…`
+   - `GET /example/status/{id}`, which returns `{keyLive}`
+   - `POST /example/erase`
+   - `GET /example/host`
+5. Send requests to the hosts with any tool that you like.
+
+[`examples/dev/smoke-all-hosts.sh`](../../examples/dev/smoke-all-hosts.sh) is a worked end-to-end test. On
+each runtime, it does one full path:
+
+1. Start an instance.
+2. Read its per-instance key.
+3. Request erasure.
+4. Read the key again, and see that the key is gone.
+
+The script handles the timing traps below. Read it and change it for your checks. It is a starting point.
+You can check more than it does.
+
+## Coverage and the servers that are up
+
+InProc needs no infrastructure, but it tests the least. A durable runtime is tested only when its server
+is up. A pass on a machine with no servers certifies a reduced subset. Each report must say which servers
+were up. A pass means different things with and without Temporal, Durable Task, Restate, Camunda 8, and a
+durable key store.
+
+> [!NOTE]
+> The Temporal time-skipping tests use the Temporal test server. The SDK **downloads this server on first
+> use**. Thus the first run on a new machine needs network access, but no Temporal server. Later runs use
+> the cached binary and need no network.
 
 | Runtime | Needs | Default port(s) |
 |---|---|---|
 | InProc | nothing | — |
 | Temporal | a Temporal server | 7233 |
 | Durable Task | the DTS emulator (or a scheduler) | 8080 |
-| Restate | restate-server, plus `cargo` to build the sidecar | 8088 (ingress), 9070 (admin) |
+| Restate | restate-server, and `cargo` to build the sidecar | 8088 (ingress), 9070 (admin) |
 | Elsa | nothing (SQLite file) | — |
-| Camunda 8 / Zeebe | the broker + its REST/Operate API | 26500 (gRPC), 8090 (REST) |
-| durable key store | OpenBao or RavenDB (for persistence/restart checks) | 8200 (OpenBao) |
+| Camunda 8 / Zeebe | the broker and its REST/Operate API | 26500 (gRPC), 8090 (REST) |
+| durable key store | OpenBao or RavenDB (for persistence and restart checks) | 8200 (OpenBao) |
 
 ## The traps that produce false reports
 
-These are environment and timing effects, not bugs, but each one will hand you a wrong answer if you
-don't know about it.
+These traps are effects of the environment and of timing. They are not defects in SoEx.Workflow. Each
+trap gives a wrong result if you do not know about it.
 
-1. **A stale Restate sidecar runs old code silently.** The Restate path runs a compiled Rust binary
-   out-of-process. If you change anything and don't rebuild it (`cargo build --release`), a stale
-   binary keeps serving the previous contract and your "result" reflects code that no longer exists.
-   Treat a present-but-broken sidecar build as a failure, never a pass, because it certifies nothing.
+1. **Rebuild the Restate sidecar after each change.** The Restate path runs a compiled Rust binary out of
+   process. If you do not rebuild it with `cargo build --release`, the old binary continues to serve the
+   previous contract. Your result then shows code that no longer exists. If the sidecar build is present
+   but broken, record a failure. That build certifies nothing.
 
-2. **On Temporal, the first step runs a beat after you start.** Starting an instance returns
-   immediately and mints its per-instance key, but the subject index that erasure routes by is
-   populated only when the first governed step actually runs on the worker, roughly a second or two
-   later on Temporal (the worker has to pick the workflow up). Erase or inspect in that gap and you'll
-   see "nothing happened" and wrongly conclude it doesn't work. Wait for the first step (or retry)
-   before judging. The other runtimes run the first step near-instantly, which is why this one
-   surprises people.
+2. **On Temporal, wait for the first step.** A start returns immediately and mints the per-instance key.
+   The subject index gets its entry only when the first governed step runs on the worker. The worker must
+   pick up the workflow, so on Temporal this occurs one or two seconds later. If you erase or inspect in
+   that gap, nothing seems to occur, and the result looks like a defect. Wait for the first step, or retry,
+   before you judge. The other runtimes run the first step almost immediately.
 
-3. **Zeebe's web endpoint is ready before its broker is.** The host accepts HTTP before the broker
-   will accept the first process-instance creation, so the very first start can time out even though
-   everything is fine. Retry the first start until it's accepted.
+3. **On Zeebe, retry the first start.** The web endpoint accepts HTTP before the broker accepts the first
+   process-instance creation. The first start can time out when all components are correct. Retry the
+   first start until the broker accepts it.
 
-4. **Crypto-shred only holds with a durable, shared key store.** The in-memory key store is in-process
-   only. Verifying that a shred survives a process restart with it will (correctly) show no
-   persistence, which is not evidence about the design. Use a durable store (OpenBao or RavenDB) for
-   any persistence, restart, or cross-process claim.
+4. **Use a durable, shared key store for persistence claims.** The in-memory key store is in-process only.
+   With it, a test that a shred survives a process restart correctly shows no persistence. This result
+   tells nothing about the design. For each persistence, restart, or cross-process claim, use a durable
+   store: OpenBao or RavenDB.
 
-5. **Port-open is not backend-ready.** A control panel listens before its backend is query-ready, and
-   a container's port opens before the service inside it answers. Poll a readiness signal (a
-   successful call), not just the socket, before driving anything.
+5. **Poll for a successful call before you start.** A control panel listens before its server is ready for
+   queries. A container opens its port before the service in it answers. An open port
+   does not show readiness.
 
-6. **Don't `pkill -f` a pattern that also matches your own command.** You'll kill the shell or script
-   doing the killing, mid-run, and misread the fallout as a failure. Stop hosts by PID or by the port
-   they hold.
+6. **Stop hosts by PID or by port.** Do not `pkill -f` a pattern that also matches your own command. That
+   command stops the shell or script that does the kill, during the run. The result then looks like a
+   failure.
 
-7. **Two Durable Task workers on one task hub steal each other's work.** If you run an example host
-   and a second Durable Task workload against the same task hub, each can pick up the other's
-   activities and fail in confusing ways. Give them separate task hubs.
+7. **Give each Durable Task workload its own task hub.** An example host and a second Durable Task
+   workload on one task hub each take the activities of the other. They then fail in confusing ways.
 
-## Reading a result without overclaiming
+## Read a result correctly
 
-Zero failures is the only pass. A skipped leg means its backend was unreachable, and that's a gap
-rather than a pass for that path; chase the backend rather than reporting green. Match the claim to the
-setup, too: a persistence or restart conclusion needs a durable store up, an in-memory run says nothing
-about it, and a cross-runtime conclusion needs those runtimes' backends up. A reproducible red is a
-true signal, but first rule out the traps above (especially 1–3), which account for most "it doesn't
-work" reports that turn out to be setup.
+1. Accept only zero failures as a pass.
+2. Make sure that the run covered each path that you report.
 
-See also the per-runtime semantics and the conditional-coverage note in the
-[runtime matrix](../reference/runtime-matrix.md#verifying-locally).
+   A host or test that the run did not select is absent from the results. It certifies nothing. A
+   selected host or test that cannot reach its server fails. Find the cause, and do not report it as a
+   pass.
+3. Match each claim to the setup.
+
+   A persistence or restart conclusion needs a durable store. An in-memory run tells nothing about
+   persistence. A cross-runtime conclusion needs the servers of those runtimes.
+4. Before you report a failure, eliminate the traps above, especially traps 1 to 3.
+
+   A failure that occurs again is a true signal. But most reports of a defect come from these setup
+   traps.
+
+The [runtime matrix](../reference/runtime-matrix.md#verifying-locally) gives the behavior of each runtime
+and the note about conditional coverage.

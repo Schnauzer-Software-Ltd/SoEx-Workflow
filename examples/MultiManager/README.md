@@ -1,8 +1,11 @@
-# Multi-manager example — two managers, one workflow utility, one runtime
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
 
-This example shows several business managers sharing a single `WorkflowUtility` on a single runtime, and a
-"forget subject S" request being driven to crypto-shred through **the manager that owns each instance** rather
-than one global contract.
+# Multi-manager example: two Managers, one workflow utility, one runtime
+
+In this example, several business Managers share one `WorkflowUtility` on one runtime. A "forget subject
+S" request goes to crypto-shred through the Manager that owns each instance. Each Manager has its own
+erasure contract.
 
 ```
 dotnet run --project examples/MultiManager
@@ -10,28 +13,31 @@ dotnet run --project examples/MultiManager
 
 ## What it demonstrates
 
-- **Multi-manager routing.** Two managers (Onboarding and Billing) share one utility's stores. The utility
-  resolves each instance's owning manager from the instance-id prefix (`ErasureRouting.ByPrefix`) and drives
-  erasure through that manager's `IErasureEvent` — so each manager only ever handles its own instances.
-- **An asynchronous, durable front door.** `RequestEraseAsync` admits the request and returns immediately;
-  a later `DrainEraseRequestsAsync` pass runs the erasure. The caller is never blocked for the shred, which is
-  a statutory-deadline job, not a synchronous SLA.
-- **A synchronous shred core.** The decoupling is at the request boundary only. The shred itself stays a
-  single synchronous call into the owning manager, so the "retain-confirmed, then destroy" ordering holds —
-  exactly the reason a queue is *not* placed between the utility and the manager (see
-  [Why the sequence runs synchronously](../../docs/explanation/crypto-shred-and-erasure.md)).
-- **Crypto-shred.** Each instance's payload is readable before the shred and unrecoverable after.
+- **Multi-manager routing.** Two Managers (Onboarding and Billing) share the stores of one utility. The
+  utility finds the owner Manager of each instance from the prefix of the instance id
+  (`ErasureRouting.ByPrefix`). It then runs the erasure through the `IErasureEvent` of that Manager. Thus
+  each Manager handles only its own instances.
+- **An asynchronous, durable entry point.** `RequestEraseAsync` accepts the erasure request and returns
+  immediately. A later `DrainEraseRequestsAsync` pass runs the erasure. The caller does not wait for the
+  shred. The shred has a statutory deadline. It has no synchronous service level.
+- **A synchronous shred core.** The request boundary is asynchronous. The shred itself is one synchronous
+  call into the owner Manager. Thus the order "confirm the retained data, then destroy" stays correct.
+  For this reason, there is no queue between the utility and the Manager. See
+  [Why the sequence runs synchronously](../../docs/explanation/crypto-shred-and-erasure.md).
+- **Crypto-shred.** Before the shred, you can read the payload of each instance. After the shred, the
+  payload is unrecoverable.
 
 ## How it is wired
 
-The demo composes the governed core by hand (no SoEx host ceremony) to keep the focus on routing:
+The demo composes the governed core by hand, with no SoEx host setup. Thus the demo shows only the routing:
 
-- one `InMemoryInstanceKeyStore` + `InMemorySubjectIndex` + `InMemoryPendingErasureRequests`, shared by both
-  managers — one utility, one set of stores;
-- a `WorkflowUtility` built with `resolveErasureFor: ErasureRouting.ByPrefix(...)` mapping each manager's flow
-  prefix to its erasure contract, plus the `pending` intake store for the front door.
+- One `InMemoryInstanceKeyStore`, one `InMemorySubjectIndex`, and one `InMemoryPendingErasureRequests`.
+  Both Managers share them. There is one utility and one set of stores.
+- A `WorkflowUtility` built with `resolveErasureFor: ErasureRouting.ByPrefix(...)`. This map connects the
+  flow prefix of each Manager to its erasure contract. The utility also has the `pending` intake store for
+  the entry point.
 
-In a real system each manager is its own SoEx subsystem (its own entrypoint, gateway, and `GovernedTermination`
-over the shared stores), and the composition supplies the same routing map to the utility. The natural
-completion path is already per-manager by construction; only the utility's request-driven erase/sweep fan-out
-needs the routing this example shows.
+In a real system, each Manager is its own SoEx subsystem. It has its own entrypoint, its own gateway, and
+its own `GovernedTermination` over the shared stores. The composition gives the same routing map to the
+utility. The natural completion path is already separate for each Manager, by design. Only the erase and
+sweep fan-out of the utility, which a request starts, needs the routing that this example shows.

@@ -70,7 +70,7 @@ internal class Program
             return;
         }
 
-        Process sidecar = RestateSidecar.Start(sidecarBin, sidecarDir);
+        Process sidecar = RestateSidecar.Start(sidecarBin, sidecarDir, token);
         if (!RestateSidecar.WaitForPort(sidecarPort, TimeSpan.FromSeconds(20)))
         {
             Console.WriteLine($"✗ the Restate sidecar did not start listening on :{sidecarPort}.");

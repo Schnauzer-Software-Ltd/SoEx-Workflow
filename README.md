@@ -14,85 +14,103 @@ For the time being the best place to start would be running the examples and pok
 
 # SoEx-Workflow
 
-Governed, durable workflow execution for SoEx subsystem entrypoints, with built-in right-to-erasure.
-Every step runs through the SoEx host pipeline under a per-instance encryption key. When an instance
-ends, or when someone asks you to forget a subject, that key is destroyed and everything the framework
-sealed under it becomes unrecoverable. This is crypto-shred. The durable subject-to-instance index that
-erasure routing depends on gets the same treatment: it stores each subject only as a one-way lookup
-token plus a blob sealed under that instance's key, so it holds no recoverable subject at rest and is
-shredded along with the instance when it terminates.
+SoEx-Workflow runs durable workflows for SoEx subsystem entrypoints. It also erases personal data on
+request. Personal data is PII (personally identifiable information).
 
-A few caveats to know up front; the [threat model](docs/explanation/crypto-shred-and-erasure.md#threat-model)
-covers each in full:
+Each workflow instance has its own encryption key. Each step of the instance runs through the SoEx host
+pipeline. The framework seals the data of the instance with that key. When the instance ends, the
+framework destroys the key. When a person asks to be forgotten, the framework destroys the key of each
+instance that holds that person. Without the key, the sealed data is unrecoverable. This operation is
+crypto-shred.
 
-- **The key store is the remaining concern.** A key-store backup taken before the destroy can still hold
-  the key, so in production you bound key-store snapshot retention to the erasure window (or rotate the
-  master key after shreds). See
+The subject index connects each subject to the instances that hold it. Erasure uses the index to find
+those instances. The index keeps each subject as a one-way lookup token and a blob sealed with the key of
+the instance. When the instance terminates, crypto-shred also removes its index entries.
+
+## Limits of the protection
+
+The [threat model](docs/explanation/crypto-shred-and-erasure.md#threat-model) gives the full details of
+each limit.
+
+- **Key-store backups.** A backup of the key store can hold a key after the framework destroys it. In
+  production, keep key-store snapshots for no longer than the erasure window. Alternatively, rotate the
+  master key after a shred. See
   [the key store's own backups](docs/explanation/crypto-shred-and-erasure.md#the-key-stores-own-backups).
-- **Crypto-shred protects what was sealed, not what the engine reads in clear.** Instance ids and step or
-  final results are journaled in clear and survive the shred; the framework guards them with a substring
-  scan for subjects it already governs, which is a safety net, not a universal PII scanner. Keep these
-  PII-free by construction — see
+- **Values in clear text.** Crypto-shred makes sealed data unrecoverable. The runtime journal keeps
+  instance ids, step results, and final results in clear text, and these values stay after the shred.
+  The framework scans these values for the subjects that it governs. This scan is a safety net for
+  known subjects only. Keep PII out of these values. See
   [what is sealed vs guarded](docs/explanation/crypto-shred-and-erasure.md#what-is-sealed-vs-guarded).
-- **It is data-at-rest erasure, not confidentiality in flight.** Payloads are sealed at rest, but the
-  OpenBao key store sends the plaintext to the server on every seal, and the Restate sidecar and Zeebe
-  gateway default to plaintext transport — use TLS (an `https` OpenBao address, `ZeebeWorkflowHost.ConnectSecure`)
-  off loopback. See the [runtime matrix](docs/reference/runtime-matrix.md).
-- **An abandoned instance is shredded by the sweep, not instantly.** An admin terminate/purge bypasses the
-  termination hook, so closure then depends on the
-  [erasure maintenance sweep](docs/how-to/run-erasure-maintenance.md) being scheduled.
-- **An erasure request is acknowledged, then shredded on a drain pass.** Right-to-erasure is admit-and-drain:
-  `RequestEraseAsync` records a request and returns at once; the crypto-shred happens when the drain runs
-  (the built-in maintenance runner does it by default). Schedule the drain within your statutory deadline and
-  back it with a durable pending store, or an acknowledged request can be lost or never honoured. See
+- **Data in transit.** Crypto-shred applies to data at rest. On each seal, the OpenBao key store sends
+  the plaintext to the server. The Restate sidecar and the Zeebe gateway use plaintext transport by
+  default. Off loopback, use TLS: an `https` OpenBao address and `ZeebeWorkflowHost.ConnectSecure`. See
+  the [runtime matrix](docs/reference/runtime-matrix.md).
+- **Abandoned instances.** An admin terminate or purge skips the termination hook. The
+  [erasure maintenance sweep](docs/how-to/run-erasure-maintenance.md) then closes the instance. You
+  must schedule the sweep.
+- **Erasure requests.** `RequestEraseAsync` records an erasure request and returns immediately. The
+  crypto-shred occurs later, when the drain runs. The built-in maintenance runner runs the drain by
+  default. Schedule the drain within your statutory deadline. Keep pending requests in a durable store.
+  If you do not, the framework can lose an acknowledged request or fail to complete it. See
   [erasure maintenance](docs/how-to/run-erasure-maintenance.md).
 
-The same component runs on six runtimes: five durable production engines — Durable Task, Temporal, Elsa,
-Restate, and Camunda 8 / Zeebe — plus in-process, which is for tests and demos and keeps no state across
-a restart.
+## Runtimes
+
+One step component runs on six runtimes:
+
+- Durable Task
+- Temporal
+- Elsa
+- Restate
+- Camunda 8 / Zeebe
+- InProc
+
+The first five are durable production runtimes. InProc keeps state in memory only and loses it on a
+restart. Use InProc for tests and demos.
 
 ```csharp
 // one component, one step at a time, governed and erasable
-public interface IOnboardSteps
+public interface IOnboardManager
 {
     Task<StepOutcome> Run(OnboardStep step);
 }
 ```
 
-## Two ways to consume it
+## Consumption models
 
-You pick one per instance:
+There are two consumption models. You choose one for each instance.
 
-- **Portable flow.** Write one component that returns a `WorkflowAction` describing what to do next.
-  SoEx's generic driver runs it unchanged on every runtime.
-- **Native flow.** Author the flow in your runtime's own model (a Temporal `[Workflow]`, a Durable Task
-  orchestration, an Elsa graph, a Camunda 8 BPMN diagram), and your component just runs each step.
+- **Portable flow.** You write one component. Its step operation returns a `WorkflowAction` that tells
+  the driver what to do next. The SoEx driver runs the component on each runtime with no change.
+- **Native flow.** You write the flow in the model of your runtime: a Temporal `[Workflow]`, a Durable
+  Task orchestration, an Elsa graph, or a Camunda 8 BPMN diagram. Your component runs each step.
 
-Both are built on the same governed core, so erasure, idempotency, and the subject index behave the same
-either way. There are two runtime exceptions: Camunda 8 / Zeebe is native-only, and in-process is
-portable-only (see the [runtime matrix](docs/reference/runtime-matrix.md)).
-[Choose a consumption model](docs/how-to/choose-a-consumption-model.md) walks through the decision.
+Both models use the same governed core. Erasure, idempotency, and the subject index work the same in
+each model. Camunda 8 / Zeebe supports the native flow only. InProc supports the portable flow only. See
+the [runtime matrix](docs/reference/runtime-matrix.md).
+[Choose a consumption model](docs/how-to/choose-a-consumption-model.md) helps you make the decision.
 
 ## Documentation
 
-The docs follow the [Diátaxis](https://diataxis.fr) structure. Start at the
-[documentation home](docs/README.md), or go straight to what you need:
+The documentation uses the [Diátaxis](https://diataxis.fr) structure. Start at the
+[documentation home](docs/README.md), or go to the part that you need:
 
-- If you're new, start with [Build your first workflow](docs/tutorials/01-your-first-workflow.md), a
-  runnable in-process example that needs no infrastructure.
-- The [how-to guides](docs/README.md#how-to-guides) cover specific tasks: writing a component, hosting
-  it on a runtime, triggering it from a webhook, making crypto-shred durable.
-- The [reference](docs/README.md#reference) documents every type, package, and per-runtime behavior.
-- The [explanations](docs/README.md#explanation) cover the design: why crypto-shred, why two
-  consumption models, how erasure works.
+- [Build your first workflow](docs/tutorials/01-your-first-workflow.md) is the first tutorial. It runs
+  in-process and needs no infrastructure.
+- The [how-to guides](docs/README.md#how-to-guides) give the procedure for each task. Examples: write a
+  component, host it on a runtime, trigger it from a webhook, make crypto-shred durable.
+- The [reference](docs/README.md#reference) describes each type, each package, and the behavior of each
+  runtime.
+- The [explanations](docs/README.md#explanation) describe the design: crypto-shred, the two consumption
+  models, and erasure.
 
 ## Provenance and licensing
 
-Licensed under the [MIT License](LICENSE), © 2026 [Schnauzer Software Ltd](https://schnauzer.software/).
-The code is AI-generated (see [AI-PROVENANCE.md](AI-PROVENANCE.md)) and must not be upstreamed into the
-human-authored SoEx core. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md). Third-party attribution
-(the full transitive closure, all of it permissive) is in
-[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Targets `net10.0`.
+The license is the [MIT License](LICENSE), © 2026 [Schnauzer Software Ltd](https://schnauzer.software/).
+An AI generated the code. See [AI-PROVENANCE.md](AI-PROVENANCE.md). Do not upstream this code into the
+SoEx core, which humans write. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) gives the third-party attribution for the full
+transitive closure. All of these licenses are permissive. The target framework is `net10.0`.
 
-The test suite lives in a separate private repository. If you'd like to purchase access to it, contact
+The test suite is in a separate private repository. To buy access to it, contact
 [support@schnauzersoftware.co.uk](mailto:support@schnauzersoftware.co.uk).

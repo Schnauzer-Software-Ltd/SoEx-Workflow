@@ -143,7 +143,7 @@ public static class WorkflowEnvelope
         return serializer.Serialize(request, entrypoint, operationName);
     }
 
-    /// <summary>Serializes the subject stop into the ambient-context bytes the envelope carries (null = none).</summary>
+    /// <summary>Serializes the <see cref="SubjectContext"/> entry into the ambient-context bytes the envelope carries (null = none).</summary>
     public static byte[]? AmbientFor(IMessageSerializer serializer, SubjectContext? subject)
     {
         if (subject is not { } value)

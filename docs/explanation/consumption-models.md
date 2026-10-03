@@ -3,69 +3,82 @@
 
 # Consumption models
 
-SoEx.Workflow offers two ways to consume it. This page covers why there are two, what they share, and
-why an instance can't move between them. For the practical decision, see
-[Choose a consumption model](../how-to/choose-a-consumption-model.md).
+A consumption model sets the party that drives the flow of a SoEx.Workflow instance. There are two
+models: the portable flow and the native flow. Both models use the same governed core. You choose one
+model for each instance, and the instance keeps that model for its full life. For the procedure to
+choose, see [Choose a consumption model](../how-to/choose-a-consumption-model.md).
 
 ## One governed core, two ways to drive it
 
-Every SoEx.Workflow instance is built on the same governed core: a governed step and a governed
-termination. `GovernedStep<I>` runs one dispatch of your component through the SoEx host pipeline,
-applying per-step governance: minting the per-instance key, indexing the subject, and (when wired)
-collapsing at-least-once redelivery to a single effect. `GovernedTermination` runs the erasure lifecycle
-at the end: extract must-retain data, destroy the key, prune the subject index.
+Each SoEx.Workflow instance uses the governed core. The governed core has two parts:
 
-The only thing the two models differ on is who drives the flow around those calls: who decides the
-order of steps, when to wait, when to loop. The governance (keys, crypto-shred, the subject index,
-idempotency, the erasure lifecycle) is the same machinery either way, byte for byte.
+- `GovernedStep<I>` runs one dispatch of your component through the SoEx host pipeline. It applies the
+  per-step governance. It mints the per-instance key and indexes the subject. If the idempotency store
+  is wired, it also collapses at-least-once redelivery to one effect.
+- `GovernedTermination` runs the erasure lifecycle at the end. It extracts must-retain data, destroys
+  the key, and prunes the subject index.
+
+The consumption model sets the party that drives the flow around these calls. That party sets the order
+of the steps, when to wait, and when to loop. The governance is the same machinery in both models. It
+includes the keys, crypto-shred, the subject index, idempotency, and the erasure lifecycle.
 
 ## The portable flow: SoEx drives
 
-In the portable model you write one component whose step operation returns a
-[`WorkflowAction`](../reference/workflow-action.md), a small vocabulary of "complete", "go to the next
-step", "wait for an event", "delay", "loop". SoEx ships a generic per-backend driver that owns the step
-loop: it dispatches each step through the governed core, routes your returned action onto the backend's
-durable primitives, and runs the termination on completion.
+In the portable flow, you write one component. Its step operation returns a
+[`WorkflowAction`](../reference/workflow-action.md). `WorkflowAction` is a small vocabulary: "complete",
+"go to the next step", "wait for an event", "delay", and "loop". SoEx supplies a generic driver for each
+runtime. The driver owns the step loop:
 
-The payoff is portability. The same component runs unchanged on InProc, Durable Task, Temporal, Elsa,
-and Restate; you pick the runtime at hosting time, not in your code. The cost is expressiveness: your
-flow is whatever the `WorkflowAction` vocabulary can say.
+1. It dispatches each step through the governed core.
+2. It routes the returned action onto the durable primitives of the runtime.
+3. It runs the termination when the flow completes.
 
-The driver also owns the journaled bytes, which is why crypto-shred is automatic in this model. The
-driver seals every payload it persists under the per-instance key, so the backend only ever sees
-ciphertext, and you write no encryption code.
+The same component runs with no change on InProc, Durable Task, Temporal, Elsa, and Restate. You choose
+the runtime when you host the component. Your code does not name the runtime. The flow can express only
+what the `WorkflowAction` vocabulary can express.
 
-## The native flow: your backend drives
+The driver also owns the journaled bytes. The driver seals each payload that it persists with the
+per-instance key. Thus the runtime receives only ciphertext, and crypto-shred is automatic in this
+model. You write no encryption code.
 
-In the native model you author the flow in the backend's own model: a Temporal `[Workflow]` with
-parallel activities and child workflows, a Durable Task fan-out, an Elsa graph, a Camunda 8 BPMN diagram
-drawn in a visual editor. Your component just runs each step and returns a business result; a small
-per-backend hook calls the governed termination at the end.
+## The native flow: the runtime drives
 
-The payoff is the full power of the backend. The cost is that you write a flow per backend, and, because
-you now control what each step persists, you take on one governance duty the portable flow handles for
-you: journaling only ciphertext. The discipline (seal the subject into an opaque seed, thread the seed,
-unseal only inside a step) is covered in [Author a native flow](../how-to/author-a-native-flow.md).
+In the native flow, you write the flow in the model of the runtime. Examples are a Temporal
+`[Workflow]` with parallel activities and child workflows, a Durable Task fan-out, an Elsa graph, and a
+Camunda 8 BPMN diagram drawn in a visual editor. Your component runs each step and returns a business
+result. A small hook for each runtime calls the governed termination at the end.
 
-InProc has no native backend of its own, so it is always portable.
+The native flow gives you all the features of the runtime. You write one flow for each runtime. You
+also control what each step persists. Thus you own one governance duty that the driver owns in the
+portable flow: the journal must hold only ciphertext. The rules are:
+
+1. Seal the subject into an opaque seed.
+2. Pass the seed from step to step.
+3. Unseal only inside a step.
+
+[Author a native flow](../how-to/author-a-native-flow.md) gives the procedure.
+
+InProc has no native model of its own. Thus InProc always uses the portable flow.
 
 ## Why there's no migration
 
-You choose one model per instance, and the choice is permanent for that instance. This is a consequence
-of how durable execution works rather than a policy decision.
+An instance uses one consumption model for its full life. The cause is the way durable execution works:
 
-Each model produces a different durable journal and replay shape. The portable flow journals a
-`WorkflowAction`-routed step loop with flattened action DTOs (and, on Restate, a `/step`+`/terminate`
-wire contract). A native flow journals the backend-native flow with business-result steps (and a
-`/gov-step`+`/gov-terminate` contract). Durable engines resume an instance by replaying its history, and
-one driver cannot deterministically replay a history the other driver wrote. There is no shared
-intermediate form to translate between them.
+1. Each model writes a different durable journal with a different replay shape.
+   - The portable flow journals a `WorkflowAction`-routed step loop with flattened action DTOs. On
+     Restate, it uses a `/step`+`/terminate` wire contract.
+   - A native flow journals the runtime-native flow with business-result steps. On Restate, it uses a
+     `/gov-step`+`/gov-terminate` contract.
+2. A durable runtime resumes an instance when it replays the history of the instance.
+3. A driver can deterministically replay only a history that it wrote. No shared intermediate form
+   exists to translate between the two journals.
 
-So "switching models" means starting a fresh instance under the other model; there's no in-place
-upgrade. In practice this is rarely a constraint. A single host wires one model, and you decide up front
-based on whether you need backend expressiveness or cross-runtime portability.
+To change the model, start a new instance under the other model. An instance cannot be upgraded in
+place. One host can wire both models, for different instances. Decide at the start which property you need: the expressiveness of the
+runtime or portability across runtimes.
 
 ## See also
 
-- [Choose a consumption model](../how-to/choose-a-consumption-model.md) — the practical decision.
-- [Runtimes and durability](runtimes-and-durability.md) — why replay shapes differ in the first place.
+- [Choose a consumption model](../how-to/choose-a-consumption-model.md) gives the procedure for the
+  decision.
+- [Runtimes and durability](runtimes-and-durability.md) explains why the replay shapes are different.

@@ -7,7 +7,7 @@ namespace SoEx.Workflow;
 /// <summary>
 /// The per-step context a backend-native flow supplies: the durable instance id and a
 /// per-step sequence (both come from the backend's own context — e.g. a Temporal workflow id
-/// plus a workflow-owned counter), and the flowed ambient bytes (the subject stop) for the step.
+/// plus a workflow-owned counter), and the flowed ambient bytes (carrying the <see cref="SubjectContext"/> entry) for the step.
 /// </summary>
 public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null);
 
@@ -263,8 +263,8 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
                 "the action that continues the flow");
         }
 
-        // The bag is rebuilt from the incoming bytes rather than from scratch so any other ambient stop the
-        // host flowed onto the step survives; only the subject stop is replaced.
+        // The bag is rebuilt from the incoming bytes rather than from scratch so any other ambient entry the
+        // host flowed onto the step survives; only the SubjectContext entry is replaced.
         var bag = new AmbientContext(Serializer);
         if (ambientContext is { Length: > 0 })
         {
@@ -273,7 +273,7 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
 
         // The declaring step's own context decides the flag: an externally-managed flow that learns a subject
         // still defers indexing to the consumer's system, as it does for the subject it started with. With no
-        // subject stop at all there is nothing to defer to, so what the step declares is workflow-managed.
+        // SubjectContext entry at all there is nothing to defer to, so what the step declares is workflow-managed.
         bool managed = true;
         List<string> merged = [];
         if (bag.Contains<SubjectContext>())

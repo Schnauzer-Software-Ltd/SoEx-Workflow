@@ -3,18 +3,26 @@
 
 # How to write a step component
 
-A step component is the heart of what you write: a plain SoEx component that does one step's work at a
-time. This guide covers the parts that are the same for both consumption models: modeling steps,
-writing the component, attaching subjects, and implementing the erasure events. The only difference
-between the models is the return type. In the portable model your step operation returns a
-[`WorkflowAction`](../reference/workflow-action.md), while in a native flow it returns a business
-result.
+A step component is a SoEx component that does the work of one step at a time. You write it for both
+consumption models. This guide shows the parts that are the same in the two models:
+
+- make the step DTOs
+- write the component
+- attach the subjects
+- implement the erasure events
+
+The models differ only in the return type of the step operation. In the portable flow, the step
+operation returns a [`WorkflowAction`](../reference/workflow-action.md). In a native flow, it returns a
+business result.
 
 ## 1. Model the steps as DTOs
 
-Each step is a DTO carrying just what that step needs. Flow does not live in the DTO: there's no "next
-step" field, because sequencing is the driver's or the backend's job. A sealed hierarchy keeps dispatch
-exhaustive:
+1. Make one DTO for each step.
+
+   A step DTO holds the data for one step. The driver or the runtime sets the order of the steps.
+2. Put the DTOs in a sealed hierarchy.
+
+   With a sealed hierarchy, the dispatch covers all the step types.
 
 ```csharp
 public abstract record OnboardStep
@@ -28,39 +36,49 @@ public abstract record OnboardStep
 
 ## 2. Write the component
 
-Define a contract with one step operation taking your step DTO, and implement it as an ordinary
-component. There's no envelope to crack or build; SoEx dispatches your operation by name with the typed
-step. The operation name is yours, and the framework discovers it from the contract.
+1. Define a contract with one step operation. The operation takes your step DTO.
+
+   You choose the name of the operation. The framework finds the operation in the contract.
+2. Implement the contract as a usual component.
+
+   SoEx calls your operation by name with the typed step. Your code does not read or make an envelope.
 
 ```csharp
 using SoEx.Workflow;
 
 public sealed record StepOutcome(string Step, int Effect);
 
-public interface IOnboardSteps
+public interface IOnboardManager
 {
     Task<StepOutcome> Run(OnboardStep step);   // native: a business result
     // (portable model: Task<WorkflowAction> Run(OnboardStep step); — everything else is identical)
 }
 ```
 
-Add a second parameter when a step can be resumed by an event whose raiser knows something you don't —
-who accepted an invite, what amount actually cleared:
+3. If an event can resume a step, and the raiser has data for that step, add a second parameter.
+
+   Examples of such data: the person who accepted an invite, or the amount that cleared.
 
 ```csharp
 Task<StepOutcome> Run(OnboardStep step, InviteAccepted? accepted = null);
 ```
 
-It is non-null only on a step that a data-carrying raise resumed into, and only for that dispatch. Those
-are the only two shapes a step operation may have: the step DTO, optionally followed by its event data.
-Anything else is rejected when the host is built rather than when a flow first runs. If a raise carries
-data and your operation has no parameter for it, the instance parks with its key retained rather than
-running as though nothing was sent — extend the component and re-drive it. See
+The second parameter has a value only when a raise with data resumed the step. It has the value only
+for that one dispatch. In all other calls, the value is null.
+
+A step operation has one of two shapes:
+
+- the step DTO
+- the step DTO, then its event data
+
+The host refuses all other shapes when you build it. If a raise carries data and your operation has no
+parameter for it, the instance stops and holds. The instance keeps its key. To continue, extend the
+component and re-drive the instance. See
 [Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event).
 
 ```csharp
 
-public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
+public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
     public Task<StepOutcome> Run(OnboardStep step)
     {
@@ -73,22 +91,39 @@ public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
 }
 ```
 
-A step component is a normal SoEx component, so it may have no dependencies or many.
-Constructor-inject collaborators (accessors, engines) exactly as for any SoEx component, and call them
+A step component is a usual SoEx component. It can have zero or more dependencies. Inject
+collaborators (accessors, engines) through the constructor, as for all SoEx components. Call them
 in-process inside a step.
 
 ## 3. Attach the subject
 
-Tell SoEx which PII subject a step touches, so it can index that subject and route erasure for it.
-Build the ambient bytes once and pass them on the step context:
+The subject is the person whose PII (personally identifiable information) a step uses. SoEx indexes
+each subject and sends erasure requests for it to the correct instances.
+
+1. Make a `SubjectContext` for the subject.
+
+   ```csharp
+   SubjectContext.Managed("invitee@example.com");    // SoEx indexes + erases this subject
+   SubjectContext.External("invitee@example.com");   // subject handling stays with your own system
+   ```
+
+2. Make the ambient bytes one time from the `SubjectContext` with `WorkflowEnvelope.AmbientFor`.
+3. Give the ambient bytes to `SealStep` when you seal the first step.
+
+   The sealed step carries the ambient bytes. Each step receives them on its `StepContext`.
 
 ```csharp
-SubjectContext.Managed("invitee@example.com");    // SoEx indexes + erases this subject
-SubjectContext.External("invitee@example.com");   // subject handling stays with your own system
+byte[] ambient = WorkflowEnvelope.AmbientFor(step.Serializer,
+    SubjectContext.Managed("invitee@example.com"))!;
+
+byte[] seed = step.SealStep(instanceId, new OnboardStep.Lookup("invitee@example.com"), ambient);
 ```
 
-Subjects are additive. The context above names who the flow starts with; a step that later *learns*
-someone new declares them on the action it returns, and SoEx indexes them and carries them forward:
+The subjects of an instance accumulate. The ambient bytes name the subject at the start of the flow.
+
+4. If a step learns about a new person, declare that person on the action that the step returns.
+
+   SoEx indexes the new subject and carries it to the subsequent steps.
 
 ```csharp
 return new WorkflowAction.RaiseIntoNext(nextStep).Enrolling(billingContact);
@@ -98,13 +133,15 @@ See [`WorkflowAction`](../reference/workflow-action.md#enrolling-a-subject-the-s
 
 ## 4. Implement the erasure events
 
-A component hosted on a workflow binding must implement `IErasureEvent`. This is a deliberate opt-in:
-the wiring calls `WorkflowRegistration.RequireErasureEvent(...)`, so forgetting the declaration throws
-at wiring time (composition-root runtime) rather than silently running a no-op termination. Note that
-it is not a compile-time failure; the check runs when you compose the host.
+1. Implement `IErasureEvent` on each component that a workflow binding hosts.
+
+   This declaration is mandatory. The wiring calls `WorkflowRegistration.RequireErasureEvent(...)`. If
+   the declaration is missing, this call throws an exception at wiring time. Wiring time is the run
+   time of the composition root. The compiler does not find the missing declaration. The check runs
+   when you compose the host.
 
 ```csharp
-public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
+public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
     // … Run(OnboardStep) …
 
@@ -123,25 +160,26 @@ public sealed class OnboardSteps : IOnboardSteps, IErasureEvent
 }
 ```
 
-See the [erasure events reference](../reference/erasure-events.md) for the exact context types, and
-[crypto-shred and erasure](../explanation/crypto-shred-and-erasure.md) for why retained data must go
-outward.
+The [erasure events reference](../reference/erasure-events.md) gives the exact context types.
+[Crypto-shred and erasure](../explanation/crypto-shred-and-erasure.md) tells why retained data must go
+to your own store.
 
-## Two rules to keep PII out of the clear
+## Keep PII out of clear-text values
 
-SoEx journals two things in clear, so keep both PII-free:
+SoEx writes two types of values to the journal in clear text. Keep PII out of both:
 
-- Names, meaning the instance id and event/timer names. Derive instance ids with
-  [`DeterministicInstanceId`](trigger-flows-from-outside.md), and name events and timers by PII-free
-  kind.
-- The workflow result. It's returned and journaled in clear, so return a handle or a kind, not a
-  subject, and write anything you must keep outward in `OnRetaining`.
+- **Names.** These are the instance id and the event and timer names. Make instance ids with
+  [`DeterministicInstanceId`](trigger-flows-from-outside.md). Name events and timers by a kind that
+  contains no PII.
+- **The workflow result.** SoEx returns the result and writes it to the journal in clear text. Return
+  a handle or a kind as the result, with no subject in it. Write the data that you must keep to your
+  own store in `OnRetaining`.
 
-SoEx guards both with a subject-id check as a safety net, and you can
-[make that check stricter](customize-pii-detection.md). But keep them PII-free by construction.
+SoEx scans both values for known subject ids. This scan is a safety net. You can
+[make the scan stricter](customize-pii-detection.md). Design your names and results to contain no PII.
 
 ## Next
 
-- Portable model: [Run the portable flow](run-the-portable-flow.md).
-- Native model: [Author a native flow](author-a-native-flow.md).
+- Portable flow: [Run the portable flow](run-the-portable-flow.md).
+- Native flow: [Author a native flow](author-a-native-flow.md).
 - Wiring details: [The governed core reference](../reference/governed-core.md).

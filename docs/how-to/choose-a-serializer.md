@@ -1,47 +1,72 @@
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
+
 # Choose a message serializer
 
-SoEx ships several message serializers, and a governed flow runs on any of them. The stock
-`DefaultPipeline` selects System.Text.Json (`JsonMessageSerializer`), which binds every value to its
-declared type. It carries no type markers a reader could be fooled by, and in exchange it needs to be told
-about a handful of types up front. BoundJson works the same way. The Newtonsoft `OpenJsonMessageSerializer`
-writes a type marker beside every value instead, so it needs nothing from you.
+SoEx has several message serializers. A governed flow runs on each of them. There are two kinds of
+serializer:
+
+- A binding serializer binds each value to its declared type. It writes no type markers, so a reader
+  cannot be misled by a marker. You must declare some types at startup. The stock `DefaultPipeline`
+  selects System.Text.Json (`JsonMessageSerializer`), which is a binding serializer. BoundJson is also a
+  binding serializer.
+- The open serializer is the Newtonsoft `OpenJsonMessageSerializer`. It writes a type marker beside each
+  value. It needs no declared types.
 
 ## Declare the known types
 
-A binding serializer can bind a value to its declared type wherever one exists. Two places in a governed
-flow have none, because the declared type there is `object`:
+A binding serializer binds a value to its declared type. In two places of a governed flow, the declared
+type is `object`:
 
-- The ambient context bag, which carries the subject stop as a dictionary value on every governed step.
-- The portable `WorkflowAction`, whose `Complete.Result`, `RaiseIntoNext.NextStep`, `Loop.CarryState`,
-  `WaitForEvent.OnTimeout` and `EventBranch.OnEvent` members hold your step DTOs.
-- The event-data argument, if your step operation declares one. It rides the same envelope slot rule as the
-  step DTO, so a closed-hierarchy event type needs its variants registered just as a step hierarchy does.
+- The ambient context bag. On each governed step, it carries the `SubjectContext` entry as a dictionary
+  value. This entry holds the subjects of the instance.
+- The portable `WorkflowAction`. Its members `Complete.Result`, `RaiseIntoNext.NextStep`,
+  `Loop.CarryState`, `WaitForEvent.OnTimeout` and `EventBranch.OnEvent` hold your step DTOs.
 
-The framework half of that list is `WorkflowKnownTypes.Framework`. The other half is your own step DTOs,
-which the framework cannot know. Where a step DTO is a closed hierarchy — one base declared on the
-operation, a variant per step kind — register the concrete variants, since it is the variant that travels:
+`WorkflowKnownTypes.Framework` holds the framework types for these places: `SubjectContext`,
+`EventBranch`, and each `WorkflowAction` variant. Your step DTOs are the other part. The framework cannot
+know them, so you declare them.
+
+The event-data argument, if your step operation declares one, uses the same envelope slot rule as the
+step DTO. A closed-hierarchy event type needs its variants registered, as a step hierarchy does.
+
+1. Start a `KnownTypes` list with `WorkflowKnownTypes.Framework`.
+2. Add each concrete variant of each closed-hierarchy step DTO.
+
+A closed hierarchy has one base type declared on the operation and one variant for each step kind. The
+variant is the type that travels on the wire.
+
+3. Pass the known types to `builder.SoEx`.
 
 ```csharp
 var knownTypes = new KnownTypes([
     .. WorkflowKnownTypes.Framework,
-    typeof(OnboardStep.LookupUser),
-    typeof(OnboardStep.AssignSubscription),
-    typeof(OnboardStep.Abandon),
+    typeof(OnboardStep.Lookup),
+    typeof(OnboardStep.Invite),
+    typeof(OnboardStep.Assign),
+    typeof(OnboardStep.Release),
 ]);
 
 builder.SoEx(topology, knownTypes);
 ```
 
-A type the writing host has not declared fails on the first step that needs it, and the message names the
-type it wanted. Reading is not symmetric: a host that meets an ambient-context entry whose type it has not
-declared drops that entry and carries on, so a subject stop can go missing without an error. Declare the
-same types on every host that takes part in a flow, including a worker you deploy separately from the
-caller.
+4. Declare the same known types on each host that takes part in a flow.
+
+This includes a worker that you deploy separately from the caller.
+
+If the writing host does not declare a type, the first step that needs the type fails. The error message
+names the type.
+
+> [!WARNING]
+> Declare each known type on each reading host. If a host reads an ambient-context entry of an undeclared
+> type, it drops the entry and continues. The `SubjectContext` entry can then go missing with no error.
 
 ## Select a different serializer
 
-A pipeline names the serializer, so selecting another one means setting that one property on
-`DefaultPipeline`:
+The pipeline names the serializer. To select a different serializer, set one property on
+`DefaultPipeline`.
+
+1. Set `MessageSerializer` on a new `DefaultPipeline`.
 
 ```csharp
 using SoEx.Hosting.Default;
@@ -51,36 +76,44 @@ using SoEx.Topology.Pipeline;
 var pipeline = new DefaultPipeline { MessageSerializer = new PipelineSerializer<OpenJsonMessageSerializer>() };
 ```
 
-Pass it where you already pass the topology — `builder.SoEx(topology, knownTypes, pipeline)` — or set it
-as `Defaults` on a `Topology.System`. On the open serializer the known types are not needed; on BoundJson
-they are, exactly as above.
+2. Pass the pipeline with the topology: `builder.SoEx(topology, knownTypes, pipeline)`.
+
+Alternatively, set the pipeline as `Defaults` on a `Topology.System`.
+
+The open serializer needs no known types. BoundJson needs the known types, as in
+[Declare the known types](#declare-the-known-types).
 
 ## Name the contract when you seal outside the governed step
 
-`GovernedStep<I>` knows the entrypoint contract and reads and writes every envelope against it. A
-`WorkflowSealer` you build yourself does not, so tell it:
+`GovernedStep<I>` knows the entrypoint contract. It reads and writes each envelope against that contract.
+A `WorkflowSealer` that you build yourself does not know the contract.
+
+1. Pass the contract to the `WorkflowSealer` constructor as `contract`.
 
 ```csharp
-var sealer = new WorkflowSealer(keys, serializer, nameof(IOnboardSteps.Step), contract: typeof(IOnboardSteps));
+var sealer = new WorkflowSealer(keys, serializer, nameof(IOnboardManager.Run), contract: typeof(IOnboardManager));
 ```
 
-The endpoint reads a step envelope against the contract, so the seal has to write it the same way. On the
-open serializer the argument is ignored and omitting it costs nothing, which is why it is optional; on a
-binding serializer, the stock one included, omitting it leaves the two halves disagreeing about how the
-step DTO on the wire is named. A concrete DTO survives that disagreement and a closed hierarchy does not, so the failure shows up
-against exactly the flows most likely to be in production.
+The endpoint reads a step envelope against the contract, so the seal must write the envelope the same way.
+The open serializer ignores the `contract` argument. For this reason, the argument is optional.
 
-`GatewaySealGuard` takes the same optional argument and rarely wants it: a gateway usually fronts several
-flows, and the guard only needs to see whether bytes parse as an envelope at all.
+> [!CAUTION]
+> Pass `contract` when you use a binding serializer, including the stock one. Without it, the seal and the
+> endpoint name the step DTO on the wire differently. A concrete DTO still reads correctly. A closed
+> hierarchy fails, and closed hierarchies are the most likely flows in production.
 
-## What this buys
+`GatewaySealGuard` takes the same optional `contract` argument. It usually does not need it. A gateway
+usually serves several flows, and the guard checks only that the bytes parse as an envelope.
 
-Arguments and results cross the wire as their declared types. Nothing on the wire tells the reader what
-to construct, so nothing on the wire can talk it into constructing something else — the reader already
-knows what it expects. The seal is still the security boundary either way: the framework only ever hands
-a serializer bytes it decrypted itself.
+## Declared types on the wire
+
+Arguments and results cross the wire as their declared types. The wire holds no data that tells the
+reader which type to construct. The reader constructs the type that it expects. Thus the data on the wire
+cannot make the reader construct a different type. With each serializer, the seal is the security
+boundary. The framework gives a serializer only bytes that the framework decrypted itself.
 
 ## See also
 
-- [The governed core](../reference/governed-core.md) — the wiring sequence this plugs into.
-- [`WorkflowAction`](../reference/workflow-action.md) — the portable model's object-typed members.
+- [The governed core](../reference/governed-core.md) gives the wiring sequence for this configuration.
+- [`WorkflowAction`](../reference/workflow-action.md) describes the members of type `object` in the
+  portable model.

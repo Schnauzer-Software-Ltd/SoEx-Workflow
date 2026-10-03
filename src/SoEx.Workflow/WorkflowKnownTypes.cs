@@ -8,7 +8,7 @@ namespace SoEx.Workflow;
 /// <para>
 /// The stock System.Text.Json serializer binds declared types, and so does BoundJson; only a host on the
 /// Newtonsoft open serializer can ignore this type. The others need it, because two framework values cross a
-/// slot typed as <c>object</c>: the subject stop, which the ambient-context bag carries as a dictionary value on every
+/// slot typed as <c>object</c>: the <see cref="SubjectContext"/> entry, which the ambient-context bag carries as a dictionary value on every
 /// governed step, and the portable flow's <see cref="WorkflowAction"/>, whose variants a serializer can
 /// only rebuild once it knows them. Pass these alongside the consumer's own step DTOs — the framework
 /// cannot know those — when composing the host.
@@ -17,7 +17,7 @@ namespace SoEx.Workflow;
 public static class WorkflowKnownTypes
 {
     /// <summary>
-    /// The subject stop plus every <see cref="WorkflowAction"/> variant. Read off the closed hierarchy
+    /// The <see cref="SubjectContext"/> ambient entry plus every <see cref="WorkflowAction"/> variant. Read off the closed hierarchy
     /// rather than listed by hand, so a new variant is covered the day it is declared.
     /// </summary>
     public static IReadOnlyList<Type> Framework { get; } =

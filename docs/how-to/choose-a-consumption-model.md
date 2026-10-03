@@ -3,47 +3,60 @@
 
 # How to choose a consumption model
 
-SoEx.Workflow gives you two ways to consume it. You pick one per instance, and the choice is permanent
-for that instance: there's [no migration](../explanation/consumption-models.md#why-theres-no-migration),
-so switching means starting a fresh instance under the other model. This guide helps you decide.
+SoEx.Workflow has two consumption models: the portable flow and the native flow. You choose one model
+for each instance. An instance keeps its model for its full life. An instance cannot
+[migrate to the other model](../explanation/consumption-models.md#why-theres-no-migration). To use the
+other model, start a new instance. This guide helps you choose.
 
 ## When to pick the portable flow
 
-The portable flow is the right choice when you want one component that runs unchanged on every runtime,
-your flow fits the [`WorkflowAction`](../reference/workflow-action.md) vocabulary (complete, route into
-the next step, wait for an event with an optional timeout, delay, or loop/continue-as-new), and you'd
-rather not learn or maintain a different flow model per backend.
+Use the portable flow when all of these conditions are true:
 
-You write the flow as values returned from your step operation, and SoEx's generic driver drives it.
-See [Run the portable flow](run-the-portable-flow.md).
+- You want one component that runs on each runtime with no change.
+- Your flow fits the [`WorkflowAction`](../reference/workflow-action.md) vocabulary. The actions are:
+  complete, route into the next step, wait for an event with an optional timeout, delay, and
+  loop/continue-as-new.
+- You want one flow model for all runtimes.
+
+In the portable flow, your step operation returns values that make the flow. The SoEx driver runs the
+flow. See [Run the portable flow](run-the-portable-flow.md).
 
 ## When to pick a native flow
 
-A native flow is the right choice when you need the full expressiveness of a particular backend
-(Temporal's parallel activities and child workflows, a Durable Task fan-out, an Elsa graph, or a
-Camunda 8 BPMN diagram you draw in a visual editor), when the flow is naturally visual or already
-exists as a backend-native artifact, or when you're targeting Camunda 8 / Zeebe, which is native-only
-because the BPMN graph itself is the flow.
+Use a native flow when one of these conditions is true:
 
-You author the flow in the backend's own model and call the governed step from each step. See
-[Author a native flow](author-a-native-flow.md).
+- You need the full feature set of one runtime. Examples are Temporal parallel activities and child
+  workflows, a Durable Task fan-out, an Elsa graph, and a Camunda 8 BPMN diagram that you draw in a
+  visual editor.
+- The flow is visual, or it already exists as an artifact of the runtime.
+- Your runtime is Camunda 8 / Zeebe. Camunda 8 / Zeebe supports the native flow only, because the BPMN
+  graph is the flow.
 
-## Either way, governance is identical
+In a native flow, you write the flow in the model of the runtime. Each step of the flow calls the
+governed step. See [Author a native flow](author-a-native-flow.md).
 
-Both models build on the same governed core, so the per-instance key and crypto-shred, the subject
-index, idempotency, and the erasure lifecycle behave the same regardless of which you pick. The only
-difference is who drives the flow: SoEx's driver, or your backend-native code.
+## Governance in the two models
+
+Both models use the same governed core. These parts work the same in each model:
+
+- the per-instance key and crypto-shred
+- the subject index
+- idempotency
+- the erasure lifecycle
+
+The two models differ in the part that drives the flow. In the portable flow, the SoEx driver drives
+it. In a native flow, your runtime code drives it.
 
 ## At a glance
 
 | | Portable flow | Native flow |
 |---|---|---|
-| You write | one component returning a `WorkflowAction` | a component returning a business result + the flow |
-| The flow lives in | SoEx's generic driver | your backend code (or a BPMN diagram) |
-| Runs unchanged on every runtime | yes | the component does; you write a flow per backend |
-| Flow expressiveness | the `WorkflowAction` vocabulary | full backend power |
-| Available on | InProc, Durable Task, Temporal, Elsa, Restate | Durable Task, Temporal, Elsa, Restate, Camunda 8/Zeebe |
-| Governance | identical | identical |
+| You write | one component that returns a `WorkflowAction` | a component that returns a business result, and the flow |
+| The flow is in | the SoEx driver | your runtime code or a BPMN diagram |
+| Runs on each runtime with no change | yes | the component, yes; you write one flow for each runtime |
+| Flow features | the `WorkflowAction` vocabulary | all the features of the runtime |
+| Runtimes | InProc, Durable Task, Temporal, Elsa, Restate | Durable Task, Temporal, Elsa, Restate, Camunda 8/Zeebe |
+| Governance | the same | the same |
 
-For the reasoning behind the split, and why the two produce incompatible instances, see
-[Consumption models](../explanation/consumption-models.md).
+[Consumption models](../explanation/consumption-models.md) gives the reasons for the two models. It
+also tells why an instance of one model is not compatible with the other model.

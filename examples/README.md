@@ -3,33 +3,44 @@
 
 # SoEx.Workflow examples
 
-Runnable examples of consuming SoEx.Workflow. The baseline is PiiMaker, an IDesign Method project
-(IDesign-structured business components) that every example host wires onto a runtime. Each example
-then adds a thin host with the specific wiring for one runtime × consumption mode.
+These examples show how to consume SoEx.Workflow. You can run each of them. The base of the examples is
+PiiMaker, an IDesign Method project. PiiMaker holds the business components, in the IDesign structure.
+Each example host connects PiiMaker to a runtime. A host is a small project that holds the wiring for one
+runtime and one consumption model.
 
-Each host runs as a small web control panel: it stands up the "membership" system and serves a static
-page of buttons, one per external event the workflow waits for (a user verifies an account, accepts an
-invite, updates payment, a leaver is offboarded). You press a button, an HTTP request hits the manager's
-trigger controller, the request dispatches into the SoEx manager, and the durable flow moves
-forward. That lets you exercise the whole workflow interactively, by hand, instead of watching one
-hardcoded script.
+Each host is a small web control panel. The host starts the "membership" system and serves a static page
+of buttons. Each button is one external event that the workflow waits for:
 
-> Built as its own solution (`SoEx.Workflow.Examples.sln`) so the shipped library build
-> (`../SoEx.Workflow.sln`) stays clean.
+- a user verifies an account
+- a user accepts an invite
+- a user updates the payment details
+- the system offboards a leaver
+
+When you push a button, an HTTP request goes to the trigger controller of the Manager. The controller
+dispatches the request into the SoEx Manager, and the durable flow moves forward. Thus you can operate the
+full workflow by hand, one event at a time.
+
+> The examples have their own solution (`SoEx.Workflow.Examples.sln`). Thus the build of the shipped
+> library (`../SoEx.Workflow.sln`) contains only the library.
 
 ## Other examples
 
-- [**Statechart**](Statechart/README.md) — an expense-approval Manager whose process is a statechart, drawn in
-  a tool and exported as XState v6 JSON. Same component layout as PiiMaker, so it is clear that all the
-  business logic is under `Component/` and everything else is framework. Console, no backend:
-  `dotnet run --project examples/Statechart`.
-- **MultiManager** — two business managers on one workflow utility, and right-to-erasure routed to the owning
-  manager per instance. Console, no backend: `dotnet run --project examples/MultiManager`.
+- [**Statechart**](Statechart/README.md): an expense-approval Manager. Its process is a statechart that
+  you draw in a tool and export as XState v6 JSON. The component layout is the same as in PiiMaker. All
+  the business logic is under `Component/`, and all other code is framework. It is a console program and
+  needs no runtime server: `dotnet run --project examples/Statechart`.
+- **MultiManager**: two business Managers on one workflow utility. Right-to-erasure goes to the Manager
+  that owns each instance. It is a console program and needs no runtime server:
+  `dotnet run --project examples/MultiManager`.
 
-## Running — the web control panel
+## Run the web control panel
 
-Start any host and open its page; pick the host from the in-page dropdown (it can drive any host
-that's running). Start only the hosts whose backend is up.
+1. Start the hosts whose backend is up. Start no other hosts.
+2. Open the page of one host.
+3. Select a host in the dropdown on the page.
+
+The page opens with the host that served it selected. The dropdown lists InProc, Temporal,
+DurableTask, Restate, Elsa, and Zeebe. The page can operate each of these hosts that runs.
 
 | Host | Port | Backend needed | Flows on the panel |
 |---|---|---|---|
@@ -38,33 +49,41 @@ that's running). Start only the hosts whose backend is up.
 | DurableTask | 5003 | DTS emulator `:8080` (Docker) | A · B · C · D |
 | Restate | 5004 | restate-server `:8088`/`:9070` (Docker) + cargo | A · B · C · D |
 | Elsa | 5005 | none (SQLite file) | A · D · restart-host durability demo |
-| Zeebe | 5006 | Camunda 8 Run `:26500`/Operate `:8090` | A onboarding (native BPMN flow; native-only) |
+| Zeebe | 5006 | Camunda 8 Run `:26500`/Operate `:8090` | A onboarding (native BPMN flow; native-only) · D |
 
 ```
 dotnet run --project examples/PiiMaker/Hosts/InProc -- 5001      # then open http://localhost:5001
 ```
 
-The page capability-gates its cards from `GET /example/host`, so each host shows only the flows it can
-drive. Buttons that fire the awaited events POST to the manager's trigger controller
-(`/IMembershipManager/<Operation>`). A few example-only endpoints (`/example/*`) provide scenario toggles
-(force a billing decline to drive dunning), PII-free instance status (the per-instance key flips
-live → shredded at completion), and the erasure sweep.
+The page reads the capabilities of the host from `GET /example/host`. It shows a card for each flow. The
+cards for the flows that the host can operate are enabled. The other cards are disabled and show a note.
+The buttons that send the awaited events POST to the trigger controller of the
+Manager (`/IMembershipManager/<Operation>`). Some endpoints exist only for the examples (`/example/*`).
+They give these functions:
 
-The dropdown and links are origin-aware (built from the address the page was loaded on), so the panels
-work unchanged whether you open them on `localhost` or front them with a reverse proxy at another
-address. **These panels are demo hosts with no authentication or authorization**: every endpoint,
-including the erasure sweep, is open to anyone who can reach it. They are meant for `localhost`. If you
-front them with a reverse proxy, put authentication on the proxy (and don't expose them publicly):
-nothing in the example gates a caller. If you set `PIIMAKER_DASHBOARD_PORT` (and `PIIMAKER_DASHBOARD_SCHEME=https` where the
-dashboard needs a secure context) for a runtime that has a backend dashboard (Temporal, DurableTask,
-Restate), its `/example/host` response carries that, and the page shows a link to the runtime's
-dashboard. Unset, no link appears.
+- scenario switches, for example a forced billing decline that starts dunning
+- the status of an instance, with no PII: the per-instance key changes from live to shredded at completion
+- the erasure sweep
+
+The page builds the dropdown and the links from the address that it loaded from. Thus the panels work with
+no change on `localhost` and behind a reverse proxy at a different address.
+
+> [!WARNING]
+> Keep the panels on `localhost`. Do not expose them publicly. The panels are demo hosts with no
+> authentication and no authorization. Each endpoint, the erasure sweep included, is open to all callers
+> that can reach it. If you put a reverse proxy in front of the panels, put authentication on the proxy.
+> The example itself does no check on a caller.
+
+Temporal, DurableTask, Restate, and Zeebe each have a dashboard for the runtime. For these runtimes, you can set
+`PIIMAKER_DASHBOARD_PORT`. If the dashboard needs a secure context, also set
+`PIIMAKER_DASHBOARD_SCHEME=https`. The `/example/host` response then contains these values, and the page
+shows a link to the dashboard of the runtime. If you do not set them, the page shows no link.
 
 ### One-command dev harness (`examples/dev/piimaker.sh`)
 
-To avoid starting backends by hand, `examples/dev/piimaker.sh` provisions every backend in Docker
-(idempotently: rerun it freely; an existing container is restarted, never recreated) and launches one
-runtime host with one key store, printing the panel URL:
+The script `examples/dev/piimaker.sh` provisions each backend in Docker. It then starts one runtime host
+with one key store and prints the URL of the panel. The script is idempotent, so you can run it again at
+any time. It restarts a container that exists. It does not create that container again.
 
 ```
 ./examples/dev/piimaker.sh --runtime temporal --keystore openbao   # provision what's needed + launch
@@ -73,8 +92,8 @@ runtime host with one key store, printing the panel URL:
 ./examples/dev/piimaker.sh down                                    # stop + remove all dev containers
 ```
 
-The key store (`--keystore`, or `PIIMAKER_KEYSTORE`) is the crypto-shred root and the one piece worth
-making durable in order to see the behaviour:
+The key store (`--keystore`, or `PIIMAKER_KEYSTORE`) is the root of crypto-shred. To see the crypto-shred
+behavior across a restart, use a durable key store.
 
 | `--keystore` | Backing store | What it shows |
 |---|---|---|
@@ -82,192 +101,253 @@ making durable in order to see the behaviour:
 | `openbao` | OpenBao Transit `:8200` (root token `root`) | the key never leaves the server; per-instance Transit key `inst-<hex>` |
 | `ravendb` | RavenDB dev server `:8085` | a master-key-wrapped data key in compare-exchange `ikey/<instanceId>` |
 
-With a durable store you can watch the whole crypto-shred lifecycle and prove it survives a restart.
-Start a flow (the panel's `GET /example/status/{id}` reports `keyLive:true`, and the key appears in
-OpenBao/RavenDB), stop the host with Ctrl-C (the backend container stays up), relaunch the same
-`--runtime --keystore`, and the status is still `keyLive:true`, where a fresh in-memory store would
-have reported `false`. Erasing (or completing) the flow then drops the key, and it stays gone across
-further restarts. Pair `--keystore ravendb` with `--runtime elsa` (durable flow state in SQLite) for
-the most convincing end-to-end durability demo.
+With a durable key store, you can see the full crypto-shred lifecycle and see that it continues after a
+restart:
 
-Set `PIIMAKER_IDEMPOTENCY=ravendb` (alongside the RavenDB backend) to use the durable
-`RavenDbIdempotencyStore` for step idempotency and the Elsa gateway's idempotent re-raise, so a
-re-raise carrying the same `raiseId` stays deduped across a host restart. The default `inmemory`
-dedupes within the process.
+1. Start a flow. The panel's `GET /example/status/{id}` reports `keyLive:true`, and the key is in OpenBao or RavenDB.
+2. Stop the host with Ctrl-C. The backend container stays up.
+3. Start the host again with the same `--runtime --keystore`.
+4. Look at the status again. It is still `keyLive:true`. A new in-memory store reports `false`.
+5. Erase or complete the flow. The key store removes the key, and the key stays removed after more restarts.
 
-Set `PIIMAKER_SUBJECTINDEX=ravendb` (RavenDB server) or `=efcore` (a SQLite file via
-`PIIMAKER_SUBJECTINDEX_SQLITE`) to use a durable subject→instance index, so right-to-erasure routing
-survives a restart and is visible cross-process. The default is `inmemory`. Together with the key
-store and idempotency store, this makes the whole governance trio durable.
+Use a runtime that keeps the flow state outside the host process: Temporal, DurableTask, Restate, or
+Zeebe. The Elsa host makes a new SQLite file at each start of the process, and deletes it when the process
+stops. Thus an Elsa flow does not continue after Ctrl-C. To see Elsa durability, use the **Restart host**
+button on its panel.
 
-The built-in erasure-maintenance runner (sweep abandoned + re-drive held + review deadlines) runs by
-default; set `PIIMAKER_MAINTENANCE=off` to disable it. `PIIMAKER_MAINTENANCE_STORE=ravendb`/`efcore`
-(with `PIIMAKER_MAINTENANCE_SQLITE` for the EF Core file) makes its held/request state durable. The
-built-in runner is in-process with no leader election; for production, disable it and host a dedicated
-scheduler separately that calls the utility's one-pass operations.
+To use the durable `RavenDbIdempotencyStore`, set `PIIMAKER_IDEMPOTENCY=ravendb` and run the RavenDB
+backend. This store then holds the step idempotency and the idempotent re-raise of the Elsa gateway. A
+re-raise with the same `raiseId` then stays deduplicated across a host restart. The default `inmemory`
+store deduplicates in one process only.
 
-A few notes. The restate runtime also needs `cargo`, because its host builds the Restate sidecar (the
-script does not). The zeebe runtime runs Camunda 8 + Elasticsearch (about 2 GB RAM) so the v2
-REST/Operate read model exists. The RavenDB key store uses a demo-only master key unless
-`PIIMAKER_RAVENDB_KEK` (base64, 32 bytes) is set. Backends bind to `127.0.0.1` only and have no
-volumes, so `down` wipes their data.
+To use a durable subject index, set `PIIMAKER_SUBJECTINDEX=ravendb` (RavenDB server) or `=efcore` (a
+SQLite file in `PIIMAKER_SUBJECTINDEX_SQLITE`). With a durable subject index, right-to-erasure routing
+continues after a restart, and other processes can see the index. The default is `inmemory`. The key store,
+the idempotency store, and the subject index together are the governance trio. With these three settings,
+all three are durable.
 
-### How the trigger API is exposed
+The built-in erasure maintenance runner runs by default. It sweeps abandoned instances, re-drives held
+instances, and reviews deadlines. To disable it, set `PIIMAKER_MAINTENANCE=off`. To make its held state and
+its request state durable, set `PIIMAKER_MAINTENANCE_STORE=ravendb` or `efcore`. For EF Core, set the file
+in `PIIMAKER_MAINTENANCE_SQLITE`.
 
-The panel's HTTP API is the inbound trigger seam (`IMembershipManager`) lifted into a POST controller
-that dispatches via `Proxy.ForService<I>()`. Here it is a hand-written controller
-(`PiiMaker.Hosting.IMembershipManagerController`, serving `/IMembershipManager/<Operation>`); a
-per-request middleware (`UseSoContext`) sets the SoEx container scope so it resolves the composed manager
-and dispatches through the pipeline. The controller, middleware and JSON polymorphism resolver are wired
-once in `PiiMaker/Hosts/Common` (`PiiMaker.Hosting.MembershipWebHost`); the static UI lives once in
-`PiiMaker/Hosts/Common/wwwroot`.
+If `PIIMAKER_SUBJECTINDEX` and `PIIMAKER_MAINTENANCE_STORE` have the same durable value, one physical store
+holds the subject index and the maintenance state. For `efcore`, this store is the SQLite file in
+`PIIMAKER_ERASURE_SQLITE` (default `/tmp/piimaker-erasure.db`). The host then ignores
+`PIIMAKER_SUBJECTINDEX_SQLITE` and `PIIMAKER_MAINTENANCE_SQLITE`. For `ravendb`, this store is the database
+in `PIIMAKER_ERASURE_DATABASE` (default `PiiMakerErasure`).
+
+The built-in runner runs in-process and has no leader election. For
+production, disable it. Host a dedicated scheduler as a separate process that calls the one-pass operations
+of the utility.
+
+More facts about the script:
+
+- The restate runtime also needs `cargo`. Its host builds the Restate sidecar. The script does not build it.
+- The zeebe runtime runs Camunda 8 and Elasticsearch, and needs approximately 2 GB of RAM. Elasticsearch
+  supplies the v2 REST/Operate read model.
+- The RavenDB key store uses a master key for demos only. To supply a master key, set
+  `PIIMAKER_RAVENDB_KEK` (base64, 32 bytes).
+- The backends bind to `127.0.0.1` only and have no volumes. Thus `down` deletes their data.
+
+### How the host exposes the trigger API
+
+The HTTP API of the panel is the inbound trigger seam (`IMembershipManager`) as a POST controller. The
+controller dispatches through `Proxy.ForService<I>()`. In this example, the controller is hand-written:
+`PiiMaker.Hosting.IMembershipManagerController`, which serves `/IMembershipManager/<Operation>`. A
+per-request middleware (`UseSoContext`) sets the scope of the SoEx container. The controller can then
+resolve the composed Manager and dispatch through the pipeline.
+
+`PiiMaker/Hosts/Common` (`PiiMaker.Hosting.MembershipWebHost`) wires these parts one time for all hosts:
+
+- the controller
+- the middleware
+- the resolver for JSON polymorphism
+
+The static UI is in `PiiMaker/Hosts/Common/wwwroot`, one copy for all hosts.
 
 > [!NOTE]
-> A source generator, `SoEx.Method.Generators.AspNetCore`, writes exactly this controller for you: it
-> lifts every interface in a `*.Manager.*.Interface` assembly into a POST controller, keyed by interface
-> name. This example does **not** use it, because the manager deliberately exposes three same-named
-> interfaces — the trigger seam `IMembershipManager` plus the governed-step contracts
-> `Native.IMembershipManager` and `Portable.IMembershipManager` — and same-named controllers collide. When
-> your trigger seam is a single interface with no same-named contracts in sub-namespaces (the common
-> case), add the generator package to the hosting project and delete the hand-written controller; the
-> output is identical.
+> The source generator `SoEx.Method.Generators.AspNetCore` writes this same controller. It makes a POST
+> controller for each interface in a `*.Manager.*.Interface` assembly, with the interface name as the key.
+> This example does not use the generator. The Manager here has three interfaces with the same name: the
+> trigger seam `IMembershipManager`, and the governed-step contracts `Native.IMembershipManager` and
+> `Portable.IMembershipManager`. Controllers with the same name collide. Usually a trigger seam is a single
+> interface, and no contract in a sub-namespace has the same name. In that case, add the generator package
+> to the hosting project and delete the hand-written controller. The generated output is identical.
 
-## PiiMaker — the shared method project
+## PiiMaker: the shared Method project
 
-`PiiMaker/` is the consumer's business logic, with no hosting (that lives in each example):
+`PiiMaker/` holds the business logic of the consumer. It contains no hosting code. Each example holds its
+own hosting code.
 
-- One entrypoint component, `MembershipManager`, models every flow as a distinct operation, grouped by
-  contract: the inbound trigger seam (`IMembershipManager`), the portable operations
-  (`Portable.IMembershipManager`, returning a `WorkflowAction` — the component is the flow, and the
-  generic driver drives it on any runtime), and the native single-step operations
-  (`Native.IMembershipManager`, returning a PII-free `StepReceipt` — the backend owns the flow and calls
-  the op per step). A host governs the one it wants by name (`GovernedStep` operation selection).
+- One entrypoint component, `MembershipManager`, has a separate operation for each flow. The operations are
+  in three contracts:
+  - The inbound trigger seam: `IMembershipManager`.
+  - The portable operations: `Portable.IMembershipManager`. Each returns a `WorkflowAction`. The component
+    is the flow, and the generic driver runs it on each runtime.
+  - The native single-step operations: `Native.IMembershipManager`. Each returns a `StepReceipt` with no
+    PII. The runtime owns the flow and calls the operation for each step.
+
+  A host selects the operation to govern by its name (`GovernedStep` operation selection).
 
   > [!NOTE]
-  > Splitting the manager into a partial `MembershipManager` class across `*.Native` and `*.Portable`
-  > sub-namespaces, with the per-model operations as explicit interface implementations, is only to make
-  > the demo easier to follow — it lets the native and portable shapes of each flow be read in isolation.
-  > It is not a required pattern: a real consumer can put everything on one interface in one class, or
-  > divide it along whatever lines suit them. SoEx governs an operation by name, regardless of which
-  > contract, namespace, or file it lives in.
-- It is a real SoEx System rather than a mock. The shared composition (`PiiMaker/Hosts/Common`,
-  `PiiMaker.Hosting.MembershipSystem.Compose`) stands up a `Topology.System`: a "membership" subsystem
-  whose entrypoint is the manager (hosted on a `WorkflowBinding` for the governed step) and whose
-  components are the Engine and Access roles (`ISubscriptionEngine`, `IIdentityAccess`,
-  `IBillingAccess`, `IProvisioningAccess`, `IRetainedRecordAccess`), each with Task-based contracts.
-  The manager calls them as proxies through the pipeline (in-proc transport); each component's state
-  is a singleton on its own host `ServiceCollection`. Every host reuses this; only the way it drives
-  the governed step/termination onto a runtime differs.
-- Governance is built in: the subject is `SubjectContext.Managed(email)`; results and event names are
-  PII-free by construction; must-retain PII is written outward in `OnRetaining` via the Retention
-  component, never returned. (`MembershipManager` implements `IErasureEvent`; the termination invokes
-  it through a system-resolved proxy.)
+  > In this demo, `MembershipManager` is a partial class across the `*.Native` and `*.Portable`
+  > sub-namespaces. The operations of each model are explicit interface implementations. This split makes
+  > the demo easier to read: you can read the native shape and the portable shape of each flow separately.
+  > The pattern is optional. A real consumer can put all operations on one interface in one class, or
+  > divide them in a different way. SoEx governs an operation by its name. The contract, namespace, or file
+  > of the operation has no effect.
+- PiiMaker is a real SoEx System. The shared composition (`PiiMaker/Hosts/Common`,
+  `PiiMaker.Hosting.MembershipSystem.Compose`) makes a `Topology.System`. The system has one subsystem,
+  "membership":
+  - Its entrypoint is the Manager. A `WorkflowBinding` hosts the Manager for the governed step.
+  - Its components are the Engine and the ResourceAccess roles: `ISubscriptionEngine`, `IIdentityAccess`,
+    `IBillingAccess`, `IProvisioningAccess`, `IRetainedRecordAccess`. Each has Task-based contracts.
+
+  The Manager calls these components as proxies through the pipeline, on the in-proc transport. The state
+  of each component is a singleton on the `ServiceCollection` of its own host. All hosts use this
+  composition. Each host differs only in how it puts the governed step and the governed termination on a
+  runtime.
+- The example includes governance:
+  - The subject is `SubjectContext.Managed(email)`.
+  - The results and the event names contain no PII, by design.
+  - PII that the system must retain goes out through the Retention component in `OnRetaining`. The Manager
+    never returns it.
+  - `MembershipManager` implements `IErasureEvent`. The termination calls it through a proxy that the
+    system resolves.
 
 ### The flows (the governed-step operations)
 
-The portable operations live on `Portable.IMembershipManager`, the native single-step operations on
-`Native.IMembershipManager`; a host governs the one it wants by name.
+The portable operations are on `Portable.IMembershipManager`. The native single-step operations are on
+`Native.IMembershipManager`. A host selects the operation to govern by its name.
 
 | Flow | Operation(s) | Demonstrates |
 |---|---|---|
 | **A Onboarding** | `Onboard` (portable + native) | wait-for-event + timeout→compensation, idempotent assign, termination shred |
-| **B Subscription** | `Renew` (portable + native) | continue-as-new across renewal periods, dunning (backoff + payment-updated wait), cancel |
+| **B Subscription** | `Renew` (portable + native; the hosts run only the portable operation) | continue-as-new across renewal periods, dunning (backoff + payment-updated wait), cancel |
 | **C Offboarding** | `Offboard` (native-only) | parallel revocation fan-out, archive-in-`OnRetaining`, quarantine on archive failure |
-| **D Erasure** | (no op — `IErasureEvent` + `ErasureCoordinator`) | "forget subject S" sweep over A/B/C instances |
+| **D Erasure** | (no op: `IErasureEvent` + `ErasureCoordinator`) | "forget subject S" sweep over A/B/C instances |
 
-### Triggering from outside (`IMembershipManager`)
+### Trigger a flow from outside (`IMembershipManager`)
 
-Production systems don't drive a workflow from the code that started it: an identity provider's webhook
-says "this account was verified", a payment processor says "this card was updated". These callers have
-no instance handle, no payload, and no flow knowledge. The manager's inbound trigger contract,
-`IMembershipManager`, is that seam: one operation, `Trigger(TriggerBase trigger)`, where `TriggerBase`
-is a closed set with one case per trigger (each carrying only business identity). Every host drives its
-demos through it.
+In a production system, external callers move a workflow forward. For example, the webhook of an identity
+provider reports "this account is verified". A payment processor reports "this card is updated". These
+callers have no instance handle, no payload, and no knowledge of the flow.
 
-To start, the `TriggerBase.StartOnboarding(OrgId, Email, Offer)` / `StartRenewal(SubscriberId)` /
-`StartOffboarding(SubjectId)` cases derive the PII-free instance id from business identity
-(`DeterministicInstanceId.Keyed`: an HMAC under a deployment secret, so an email never appears in a
-journaled id and a party who knows the identity but not the secret can't derive or confirm the id), seal the seed
-(`WorkflowSealer`, the seal side only; the component never holds the dispatch endpoint), and submit
-it through the engine-agnostic `IWorkflowGateway` the host wired.
+`IMembershipManager` is the inbound trigger contract of the Manager. It has one operation,
+`Trigger(TriggerBase trigger)`. `TriggerBase` is a closed set with one case for each trigger. Each case
+contains only business identity. Each host operates its demos through this contract.
 
-To continue, `TriggerBase.AccountVerified` / `InviteAccepted` / `PaymentUpdated` re-derive the same id
-from the same business identity and raise a bare event with no payload. Each branch of a portable wait
-pre-sealed its own `OnEvent` continuation into the journal, so the flow decides what the event means, and
-a wait that names several events resumes into the continuation of the branch raised; an event raised
-with a payload still carries the next step, so data-carrying events keep working. (Offboarding is a
-self-completing fan-out, so it has no continuation events.) `Trigger` returns the derived instance id in
-every case.
+To start a flow, use the case `TriggerBase.StartOnboarding(OrgId, Email, Offer)`,
+`StartRenewal(SubscriberId)`, or `StartOffboarding(SubjectId)`. Each start case does these steps:
 
-The renewal flow shows a wait with more than one branch. Parked in dunning it listens for `payment-updated`
-and `cancel-requested` at once, each with its own pre-sealed continuation, both racing the backoff timer:
-`PaymentUpdated` retries the charge, `CancellationRequested` ends the run. They mean opposite things, so
-they are separate event names rather than one name told apart by its payload — which is what stops a
-cancellation arriving alongside a payment update from being lost. Both buttons sit on the subscription card.
+1. It derives the instance id from business identity with `DeterministicInstanceId.Keyed`. The instance id
+   contains no PII.
+2. It seals the seed with `WorkflowSealer`. `WorkflowSealer` is the seal side only. The component never
+   holds the dispatch endpoint.
+3. It submits the seed through the `IWorkflowGateway` that the host wired. This gateway works with each
+   runtime.
 
-`IMembershipManager` is what the panel's HTTP API exposes (the trigger controller above); it lives in
-its own `PiiMaker.Manager.Membership.Interface` assembly alongside the governed-step contracts. Each UI
-button fires one trigger case; the only runtime-specific code remains the host's seam wiring below
-them.
+`DeterministicInstanceId.Keyed` is an HMAC under a deployment secret. Thus an email never appears in an
+instance id in the journal. A party that knows the identity but not the secret cannot derive or confirm
+the instance id.
 
-That seam wiring is one `IWorkflowGateway` (+`WorkflowSealer`) per flow: `InProcWorkflowGateway`,
-`TemporalWorkflowGateway`, `DurableTaskWorkflowGateway` (portable flow or a native orchestration via
-its input factory), `ElsaWorkflowGateway` (start + resume by correlation id, durable across a host
-restart), `RestateWorkflowGateway` (HTTP ingress; the bare event crosses the language boundary into
-the Restate sidecar). The entry-driven demo code above the seam is identical on every host.
+To continue a flow, use the case `TriggerBase.AccountVerified`, `InviteAccepted`, or `PaymentUpdated`.
+Each continue case derives the same instance id again from the same business identity. It then raises an
+event with no payload. Each branch of a portable wait sealed its own `OnEvent` continuation into the
+journal before the wait. Thus the flow decides what the event means. If a wait names several events, it
+resumes into the continuation of the branch that the caller raised. An event raised with a payload also
+continues to the next step. Thus events that carry data continue to work. Offboarding completes by itself after a
+fan-out, so it has no continuation events. `Trigger` returns the derived instance id in each case.
+
+The renewal flow shows a wait with more than one branch. In dunning, the flow waits for `payment-updated`
+and `cancel-requested` at the same time. Each branch has its own sealed continuation, and both branches
+race the backoff timer:
+
+- `PaymentUpdated` tries the charge again.
+- `CancellationRequested` ends the run.
+
+The two events have opposite meanings, so they have separate event names. Thus a cancellation that arrives
+together with a payment update is not lost. Both buttons are on the subscription card.
+
+The HTTP API of the panel exposes `IMembershipManager` through the trigger controller above.
+`IMembershipManager` is in its own assembly, `PiiMaker.Manager.Membership.Interface`, together with the
+governed-step contracts. Each UI button sends one trigger case. The only code that is specific to a runtime
+is the seam wiring of the host, below the trigger.
+
+The seam wiring is one `IWorkflowGateway` (+`WorkflowSealer`) for each flow:
+
+- `InProcWorkflowGateway`
+- `TemporalWorkflowGateway`
+- `DurableTaskWorkflowGateway`: a portable flow, or a native orchestration through its input factory.
+- `ElsaWorkflowGateway`: start and resume by correlation id. It is durable across the **Restart host**
+  action of the Elsa panel.
+- `RestateWorkflowGateway`: HTTP ingress. The event with no payload crosses the language boundary into
+  the Restate sidecar.
+- `ZeebeWorkflowGateway`: creates the BPMN process instance and publishes the correlated message.
+
+Some native flows use a small gateway that the consumer wrote: `NativeOffboardGateway` (Temporal) and
+`RestateOffboardGateway` (Restate) start native offboarding.
+
+The demo code above the seam starts at the entrypoint. It is identical on each host.
 
 ## Hosts
 
-Each host is the consumer composition root for one cell. It wires `MembershipManager`
-(operation-by-name) onto a runtime × mode and serves the control panel (`dotnet run --project
-examples/PiiMaker/Hosts/<host> -- <port>`). All six are shipped and runnable.
+Each host is the consumer composition root for one cell. It wires `MembershipManager` (operation by name)
+onto one runtime and one consumption model, and serves the control panel. To start a host, run
+`dotnet run --project examples/PiiMaker/Hosts/<host> -- <port>`. All six hosts ship, and you can run each
+of them.
 
-- [`PiiMaker/Hosts/InProc`](PiiMaker/Hosts/InProc) (`:5001`) — InProc, portable flow: onboarding (A),
-  subscription renewal (B) and the erasure sweep (D). No backend or Docker. Offboarding (C) is
-  native-only, so it isn't runnable on the portable flow and its card is hidden.
-- [`PiiMaker/Hosts/Elsa`](PiiMaker/Hosts/Elsa) (`:5005`) — onboarding (A) on Elsa, native flow,
-  durable via EF Core SQLite. The durability demo is interactive: start onboarding (it parks on the
-  invite-accepted bookmark, persisted to SQLite), press "Restart host" (disposes the provider and
-  rebuilds a fresh one over the same database), then deliver invite-accepted: the saga resumes on the
-  new process and shreds. No Docker; SQLite is a file.
-- [`PiiMaker/Hosts/Temporal`](PiiMaker/Hosts/Temporal) (`:5002`) — all flows on a Temporal server
-  (`localhost:7233`, Docker required): onboarding (A, portable), subscription renewal (B, portable
-  continue-as-new), offboarding (C, native fan-out) and the erasure sweep (D). Native offboarding is
-  started through a small `IWorkflowGateway` over the consumer's `NativeOffboardWorkflow`; the generic
-  gateway would start the portable flow.
-- [`PiiMaker/Hosts/DurableTask`](PiiMaker/Hosts/DurableTask) (`:5003`) — all flows on the modern
-  Durable Task SDK against a Durable Task Scheduler (`localhost:8080`; the DTS emulator in Docker):
-  onboarding (A, native), subscription renewal (B, portable continue-as-new on the scheduler),
-  offboarding (C, native fan-out) and the erasure sweep (D). One task hub, so the two modes coexist by
-  orchestration name: the portable flow (B) and the consumer-authored native orchestrations (A, C) run
-  side by side.
-- [`PiiMaker/Hosts/Restate`](PiiMaker/Hosts/Restate) (`:5004`) — the cross-language runtime. Restate
-  ships no .NET SDK, so the durable flow runs out-of-process in a compiled Restate sidecar hosted by
-  restate-server, calling back to a thin .NET governed-step host over HTTP. This example ships its own
-  sidecar ([`sidecar-rs/`](PiiMaker/Hosts/Restate/sidecar-rs), built and spawned by the host), separate
-  from the library/test sidecar. The panel drives all flows over the language boundary: onboarding (A,
-  the consumer-authored `MembershipOnboard` flow) and offboarding (C, the `MembershipOffboard`
-  parallel fan-out) calling one long-lived `/gov-step` host (routed by instance-id prefix), and
-  subscription renewal (B, the generic `MembershipPortable` flow with continue-as-new + dunning)
-  calling its own `/step`+`/terminate` host on a separate port (the sidecar's `PORTABLE_STEP_URL`
-  points there, so the two callback hosts coexist), plus the erasure sweep (D). Requires
-  restate-server (`:8088`/`:9070`, Docker) and cargo to build the sidecar.
-- [`PiiMaker/Hosts/Zeebe`](PiiMaker/Hosts/Zeebe) (`:5006`) — onboarding (A) on Camunda 8 / Zeebe as a
-  native BPMN flow (the flow is `bpmn/membership-onboard.bpmn`, deployed to the broker at startup;
-  native-only, no portable flow). A governed service-task job runs each governed `Onboard` step; a process end
-  execution-listener runs the crypto-shred termination. Requires Camunda 8 Run (gateway `:26500`,
-  Operate `:8090`).
+- [`PiiMaker/Hosts/InProc`](PiiMaker/Hosts/InProc) (`:5001`): InProc, portable flow. It runs onboarding (A),
+  subscription renewal (B), and the erasure sweep (D). It needs no backend and no Docker. Offboarding (C)
+  is native-only, so this host cannot run it on the portable flow. Its card shows as disabled.
+- [`PiiMaker/Hosts/Elsa`](PiiMaker/Hosts/Elsa) (`:5005`): onboarding (A) on Elsa, native flow. It is
+  durable through EF Core SQLite. It needs no Docker, because SQLite is a file. The durability demo is
+  interactive:
+  1. Start onboarding. The flow parks on the invite-accepted bookmark, and Elsa persists the bookmark to SQLite.
+  2. Push "Restart host". The host disposes the provider and builds a new one over the same database.
+  3. Send invite-accepted. The saga resumes on the new provider and shreds. The host process stays the same.
+- [`PiiMaker/Hosts/Temporal`](PiiMaker/Hosts/Temporal) (`:5002`): all flows on a Temporal server
+  (`localhost:7233`, Docker required). It runs onboarding (A, portable), subscription renewal (B, portable
+  continue-as-new), offboarding (C, native fan-out), and the erasure sweep (D). A small `IWorkflowGateway`
+  over the consumer's `NativeOffboardWorkflow` starts native offboarding. The generic gateway starts the
+  portable flow.
+- [`PiiMaker/Hosts/DurableTask`](PiiMaker/Hosts/DurableTask) (`:5003`): all flows on the modern Durable
+  Task SDK against a Durable Task Scheduler (`localhost:8080`, the DTS emulator in Docker). It runs
+  onboarding (A, native), subscription renewal (B, portable continue-as-new on the scheduler), offboarding
+  (C, native fan-out), and the erasure sweep (D). The host uses one task hub. The orchestration name keeps
+  the two consumption models apart. The portable flow (B) and the native orchestrations that the consumer
+  wrote (A, C) run together.
+- [`PiiMaker/Hosts/Restate`](PiiMaker/Hosts/Restate) (`:5004`): the cross-language runtime. Restate has no
+  .NET SDK. Thus the durable flow runs out-of-process in a compiled Restate sidecar that restate-server
+  hosts. The sidecar calls back over HTTP to a small .NET host for the governed step. This example has its
+  own sidecar ([`sidecar-rs/`](PiiMaker/Hosts/Restate/sidecar-rs)), separate from the library/test sidecar.
+  If the sidecar binary is missing, the host builds it. The host then starts it. The panel operates all flows across the language boundary:
+  - Onboarding (A) uses the `MembershipOnboard` flow that the consumer wrote.
+  - Offboarding (C) uses the `MembershipOffboard` parallel fan-out.
+  - A and C call one long-lived `/gov-step` host. The host routes by the prefix of the instance id.
+  - Subscription renewal (B) uses the generic `MembershipPortable` flow with continue-as-new and dunning.
+    It calls its own `/step`+`/terminate` host on a separate port. The `PORTABLE_STEP_URL` of the sidecar
+    points to that port, so the two callback hosts run together.
+  - The erasure sweep (D).
+
+  This host needs restate-server (`:8088`/`:9070`, Docker), and cargo to build the sidecar.
+- [`PiiMaker/Hosts/Zeebe`](PiiMaker/Hosts/Zeebe) (`:5006`): onboarding (A) on Camunda 8 / Zeebe as a native
+  BPMN flow, and the erasure sweep (D). The flow is `bpmn/membership-onboard.bpmn`, and the host deploys it to the broker at startup.
+  Zeebe is native-only and has no portable flow. A governed service-task job runs each governed `Onboard`
+  step. A process end execution-listener runs the crypto-shred termination. This host needs Camunda 8 Run
+  (gateway `:26500`, Operate `:8090`).
 
 ## Coverage matrix
 
-Each example host wires `MembershipManager` (operation-by-name) onto one cell:
+Each example host wires `MembershipManager` (operation by name) onto one cell:
 
 | Flow | Modes | Runtimes (on the control panels) |
 |---|---|---|
 | A Onboarding | native + portable | InProc (portable) · Temporal (portable) · DurableTask (native) · Elsa (native) · Restate (native) · Zeebe (native) |
-| B Subscription | portable | InProc · Temporal · DurableTask · Restate |
+| B Subscription | portable (the Manager also has a native `Renew`; no host runs it) | InProc · Temporal · DurableTask · Restate |
 | C Offboarding | native only | Temporal · DurableTask · Restate |
 | D Erasure | operation (mode-agnostic) | every host: runs over in-flight instances; the termination shred is each runtime's hook |
 
-All six runtime columns have a runnable web control panel (Zeebe is native-only, onboarding); the
-ports and run instructions are above.
+Each of the six runtimes has a web control panel that you can run. Zeebe is native-only and runs
+onboarding and the erasure sweep only. The ports and the run instructions are above.

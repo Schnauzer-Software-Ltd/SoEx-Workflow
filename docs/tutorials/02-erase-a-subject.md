@@ -1,25 +1,28 @@
 > [!IMPORTANT]
 > This file was LLM generated and is pending editing by the project maintainer.
 
-# Tutorial 2 — Erase a subject
+# Tutorial 2: Erase a subject
 
-In [Tutorial 1](01-your-first-workflow.md) your workflow completed naturally and crypto-shredded itself.
-SoEx.Workflow exists for the harder case, though: someone exercises their right to be forgotten while
-an instance is still in flight. In this tutorial you issue a "forget this person" request and watch
-SoEx force-terminate the instance, keep the data you're legally required to retain, and render everything
-else unrecoverable.
+In [Tutorial 1](01-your-first-workflow.md), the workflow completed and crypto-shredded itself. This
+tutorial shows the main use of SoEx.Workflow. A person uses their right to be forgotten while an
+instance is in flight. You send a request to forget the person. Then SoEx does these operations:
 
-Continue in the same `FirstWorkflow` project from Tutorial 1. This takes about 15 minutes.
+1. It force-terminates the instance.
+2. It keeps the data that the law requires you to retain.
+3. It makes all other data unrecoverable.
 
-## Step 1 — Retain what you must, before the shred
+Continue in the `FirstWorkflow` project from Tutorial 1. The tutorial takes approximately 15 minutes.
 
-Erasure destroys the per-instance key, so anything sealed under it is gone. Sometimes you're legally
-required to keep something: a lawful-basis record, an audit marker. The `OnRetaining` hook fires before
-the shred, while the data is still readable. That's where you write must-retain data outward to your own
-store.
+## Step 1: Retain what you must, before the shred
 
-Replace the no-op `OnRetaining` in `OnboardManager` with one that records outward. We'll keep a tiny
-in-memory store so we can print it later:
+Erasure destroys the per-instance key. All data that is sealed with that key then becomes
+unrecoverable. The law can require you to keep some data, for example a lawful-basis record or an audit
+marker. The `OnRetaining` hook fires before the shred, while the data is readable. In that hook, write
+the data that you must retain to your own store.
+
+1. In `OnboardManager`, replace the empty `OnRetaining` with an operation that writes a record.
+
+   In this tutorial, a small in-memory list is the store. The tutorial prints the list at the end.
 
 ```csharp
 public sealed class OnboardManager : IOnboardManager, IErasureEvent
@@ -41,19 +44,25 @@ public sealed class OnboardManager : IOnboardManager, IErasureEvent
 }
 ```
 
-## Step 2 — Stand up an in-flight instance
+## Step 2: Stand up an in-flight instance
 
-A running instance has already minted its per-instance key and registered its subject in the index.
-We'll set that state up directly so the example is self-contained, and seal a payload so we can prove,
-at the end, that it becomes unreadable.
+An instance in flight has a per-instance key, and its subject is in the subject index. In this step, you
+make that state directly, so the example needs no other parts. You also seal a payload. At the end, the
+tutorial uses this payload to show that it is no longer readable.
 
-This tutorial uses one subject, the person the flow was started for. An instance can hold more than one:
-a step that learns about someone declares them, and everything below then covers them too. That's
-[`WorkflowAction.Subjects`](../reference/workflow-action.md#enrolling-a-subject-the-step-learned), and
-you don't need it yet.
+This tutorial uses one subject: the person who starts the flow. An instance can hold more than one
+subject. When a step learns about a person, the step declares that person. The erasure in this tutorial
+then applies to that person also. This feature is
+[`WorkflowAction.Subjects`](../reference/workflow-action.md#enrolling-a-subject-the-step-learned). This
+tutorial does not use it.
 
-Keep the governed-core wiring from Tutorial 1 (it gives you `keys`, `index`, `step`, and `component`).
-Then add:
+1. Keep the governed-core wiring from Tutorial 1, Step 3.
+
+   The wiring gives you `keys`, `index`, `step`, and `component`.
+2. Remove the code from Tutorial 1, Step 4 and Step 5.
+
+   That code declares `instanceId` and `ambient`. The code below declares these names again.
+3. Add this code after the wiring.
 
 ```csharp
 const string instanceId = "onboard-1";
@@ -71,9 +80,11 @@ Console.WriteLine($"Before erasure — key live: {keys.Has(instanceId)}");
 Console.WriteLine($"Before erasure — payload readable: {CanDecrypt(step, instanceId, sealedPayload)}");
 ```
 
-Add this helper as a top-level local function. It has to live with the other top-level statements —
-**above** the `OnboardStep`/`OnboardManager` type declarations that sit at the bottom of `Program.cs` —
-because C# requires every top-level statement to precede the file's type declarations:
+4. Add this helper as a top-level local function **above** the `OnboardStep` and `OnboardManager` type
+   declarations.
+
+   C# requires all top-level statements before the type declarations of the file. The type
+   declarations are at the bottom of `Program.cs`.
 
 ```csharp
 static bool CanDecrypt(GovernedStep<IOnboardManager> step, string id, byte[] sealedPayload)
@@ -83,11 +94,20 @@ static bool CanDecrypt(GovernedStep<IOnboardManager> step, string id, byte[] sea
 }
 ```
 
-## Step 3 — Issue the erasure request
+## Step 3: Issue the erasure request
 
-`ErasureCoordinator` runs a "forget subject S" request end to end: it finds every instance touching that
-subject through the index, decides per instance whether to let it finish or force-terminate it, drives
-the terminations to crypto-shred, and reports.
+`ErasureCoordinator` runs a request to forget a subject from start to end. It does these operations:
+
+1. It uses the subject index to find each instance that holds the subject.
+2. For each instance, it decides to let the instance finish or to force-terminate it.
+3. It drives the terminations to crypto-shred.
+4. It reports the result.
+
+To send the request, do these steps:
+
+1. Make an `ErasureCoordinator`.
+2. Make an `ErasureRequest` for the subject.
+3. Call `EraseAsync` and print each outcome.
 
 ```csharp
 var coordinator = new ErasureCoordinator(
@@ -108,7 +128,9 @@ foreach (var o in result.Outcomes)
     Console.WriteLine($"Erased {o.InstanceId}: {o.Action} → {o.State}");
 ```
 
-## Step 4 — See what survived and what didn't
+## Step 4: See the data that stays and the data that is erased
+
+1. Print the state of the key, the payload, and the retained store.
 
 ```csharp
 Console.WriteLine($"After erasure — key live: {keys.Has(instanceId)}");
@@ -118,11 +140,13 @@ Console.WriteLine($"Retained outward: {string.Join("; ", component.Retained)}");
 
 ## Run it
 
+1. Run the program.
+
 ```sh
 dotnet run
 ```
 
-After the host startup logs, you should see:
+After the host startup logs, you see this output:
 
 ```
 Before erasure — key live: True
@@ -135,21 +159,28 @@ Retained outward: onboard-1/terminal/0: onboarding record (lawful basis: contrac
 
 ## What happened
 
-The request named a subject rather than an instance. The coordinator looked the subject up in the
-index, found `onboard-1`, and force-terminated it: `OnRetaining` fired first (writing the lawful-basis
-record to your own store), then the per-instance key was destroyed and the subject pruned from the
-index. After that, the sealed payload can never be decrypted again, because the key was the only way to
-read it. This is crypto-shred: instead of hunting down and deleting every copy of the data, you destroy
-the one key that makes it readable.
+The request named a subject. The coordinator found the subject in the index and found `onboard-1`. Then
+it force-terminated the instance in this sequence:
 
-Note the division of labor. You decide what must be retained, and write it outward (PII-free) in
-`OnRetaining`. SoEx destroys the key, prunes the index, and reports, the same way on every runtime.
+1. `OnRetaining` fired. It wrote the lawful-basis record to your own store.
+2. SoEx destroyed the per-instance key.
+3. SoEx removed the subject from the index.
+
+The key was the only way to read the sealed payload. Now nobody can decrypt the payload. This is
+crypto-shred: you destroy the one key that makes the data readable. All sealed copies of the data then become
+unrecoverable.
+
+The work has two parts:
+
+- You decide what data to retain. In `OnRetaining`, you write it to your own store, with no PII.
+- SoEx destroys the key, removes the subject from the index, and reports. It does this the same way on
+  each runtime.
 
 ## Next
 
-- [How crypto-shred and erasure work](../explanation/crypto-shred-and-erasure.md) — the model, the
-  guarantees, and the threat model behind what you just saw.
-- [Run erasure maintenance](../how-to/run-erasure-maintenance.md) — the backstops that catch instances
-  no one ever files a request for.
-- [Make crypto-shred durable](../how-to/make-crypto-shred-durable.md) — swap the in-memory key store for
-  one that survives a restart, so the shred holds in production.
+- [How crypto-shred and erasure work](../explanation/crypto-shred-and-erasure.md). The model, the
+  guarantees, and the threat model for this tutorial.
+- [Run erasure maintenance](../how-to/run-erasure-maintenance.md). The maintenance tasks that close
+  instances that have no erasure request.
+- [Make crypto-shred durable](../how-to/make-crypto-shred-durable.md). Replace the in-memory key store
+  with one that keeps its data after a restart. Then the shred is effective in production.

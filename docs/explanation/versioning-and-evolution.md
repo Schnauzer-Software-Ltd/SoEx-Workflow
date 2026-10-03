@@ -3,71 +3,75 @@
 
 # Versioning and evolution
 
-You have instances running. You change a flow and redeploy. What happens to the instances that were
-already in flight when the new code went out?
-
-SoEx.Workflow ships no versioning type and no migration engine, so the honest answer is "it depends on
-two things you already chose": which consumption model the instance runs under, and which runtime it
-runs on. This page explains both, and shows the one pattern that gives you hard isolation between an old
-and a new version without any framework machinery. For the step-by-step recipe, see
-[Evolve a running flow](../how-to/evolve-a-running-flow.md).
+This page describes what occurs to in-flight instances when you change a flow and redeploy it. Two
+choices that you already made control the result: the consumption model of the instance and its
+runtime. SoEx.Workflow has no versioning type and no migration engine. This page also gives one pattern
+that fully isolates an old version from a new version with no framework machinery. For the procedure,
+see [Evolve a running flow](../how-to/evolve-a-running-flow.md).
 
 ## The portable flow rolls forward
 
-In the [portable flow](consumption-models.md) the orchestration is framework code and never changes
-with your business logic. Your operation runs as a step off the replay path (a Temporal or Durable Task
-activity, an HTTP call on Restate, a direct dispatch in-process). Because your code runs off the replay
-path, changing it does not produce a non-determinism error. An in-flight instance that resumes after you
-redeploy runs its remaining steps under the new code; steps already recorded are not re-executed.
+In the [portable flow](consumption-models.md), the orchestration is framework code. It stays the same
+when your business logic changes. Your operation runs as a step off the replay path. On Temporal or
+Durable Task the step is an activity, on Restate it is an HTTP call, and on InProc it is a direct
+dispatch. Thus a change to your code causes no non-determinism error. When an in-flight instance
+resumes after a redeploy, its remaining steps run the new code. The runtime does not run again the steps
+that it already recorded.
 
-So the default for the portable flow is roll-forward: a paused instance picks up your latest code from
-the point it resumes. That is what you want for a bug fix or an additive change, and it matches how a
-re-drive works everywhere else in the system, which is against whatever is currently deployed.
+The default for the portable flow is thus roll-forward. A paused instance runs your latest code from the
+point where it resumes. This is correct for a bug fix or an additive change. A re-drive in all other
+parts of the system works the same way: it runs against the code that is deployed now.
 
-The case to watch is a change where the new step code cannot cope with state an earlier version already
-produced. If version 2 of a step reads a field that version 1 never sealed into the seed, or retires a
-step kind an in-flight instance is about to route to, nothing will flag it at replay time. The instance
-simply fails, or behaves wrongly, when it reaches the changed step. Two ways to stay safe:
+Incompatible state is the risk. New step code can fail on state that an earlier version made. Two
+examples:
 
-- Keep step inputs backward-compatible. Add fields rather than removing or repurposing them, and keep
-  handling the old kinds while any instance might still route to them.
-- Or segregate the versions so old instances never meet new code. See [pin-and-drain](#pin-and-drain-with-no-framework-machinery)
-  below.
+- Version 2 of a step reads a field that version 1 did not seal into the seed.
+- Version 2 retires a step kind, and an in-flight instance will route to that kind.
 
-One caveat sits above your own code: upgrading the SoEx.Workflow package itself can change the framework
-orchestration that the portable flow replays. Treat a framework upgrade the way you would treat any
-change to workflow code on your runtime, and if the orchestration shape changed between versions, drain
-or pin across the upgrade rather than redeploying under running instances.
+No check finds this at replay time. The instance fails, or behaves incorrectly, when it gets to the
+changed step. Use one of these two methods to prevent this:
+
+- Keep step inputs backward-compatible. Add fields. Do not remove or repurpose fields. Continue to handle
+  the old kinds while an instance can still route to them.
+- Segregate the versions, so that old instances never meet new code. See
+  [pin-and-drain](#pin-and-drain-with-no-framework-machinery) below.
+
+An upgrade of the SoEx.Workflow package can change the framework orchestration that the portable flow
+replays. Treat a framework upgrade as a change to workflow code on your runtime. If the orchestration
+shape changed between versions, drain or pin across the upgrade. Do not redeploy under running
+instances.
 
 ## The native flow follows its runtime's rules
 
-In a [native flow](../how-to/author-a-native-flow.md) you author the orchestration yourself, so the
-flow's control structure is the thing being replayed or resumed. Each runtime has its own rules for
-changing that structure under running instances, and this is where the runtime you picked matters most.
+In a [native flow](../how-to/author-a-native-flow.md), you write the orchestration. The runtime replays
+or resumes the control structure of your flow. Each runtime has its own rules for a change to that
+structure under running instances. For a native flow, your choice of runtime thus has the largest
+effect.
 
 ## What each runtime does on redeploy
 
 | Runtime | In-flight instances on redeploy | Tool for a breaking change |
 |---|---|---|
-| **Durable Task (DTFx / DTS)** | Portable: safe, the step is an activity. Native: the orchestrator is replayed and there is no in-code patch API, so a changed orchestrator risks a corrupt replay. | Deploy the new version under a different orchestration name and route new starts to it; old instances drain on the old name. The gateway takes the orchestration name as a parameter. |
-| **Temporal** | Portable: safe, the step is an activity. Native: the `[Workflow]` is replayed and a change to its control flow can throw a non-determinism error. | Use Temporal's own facilities: `Workflow.Patched` / `GetVersion` to gate the change, or Worker Build-ID versioning to keep running instances on the old worker while new starts take the new build. |
-| **Elsa** | Definitions are versioned natively. Running instances stay pinned to the version they started on; a newly published version only affects new starts. | The gateway starts `VersionOptions.Latest`, so new starts pick up your latest published definition while in-flight instances finish on theirs. Pin a specific version in the definition handle to hold new starts back. |
-| **Restate** | Deployments are versioned natively. In-flight invocations keep running against the deployment they started on; a new deployment serves new invocations. | The flow lives in the sidecar binary, so a new version is a new sidecar deployment; Restate's deployment model handles the cutover. |
-| **Camunda 8 / Zeebe** (native only) | BPMN process definitions are versioned natively. Running instances stay on the version they were created under; a new deployment gets a new version number that only new starts use. | The gateway starts `.LatestVersion()`, so new starts use your newest diagram while in-flight instances drain. Camunda also supports explicit process-instance migration (mapping old activities to new), which you drive against the engine, outside the framework. |
-| **InProc** | Keeps no state across a restart; it is for tests and demos. A restart loses in-flight instances, so there is no in-flight-versioning question to answer. | Not applicable. |
+| **Durable Task (DTFx / DTS)** | Portable: safe, because the step is an activity. Native: the runtime replays the orchestrator, and it has no in-code patch API. A changed orchestrator can corrupt the replay. | Deploy the new version under a different orchestration name and route new starts to it. Old instances drain on the old name. The gateway takes the orchestration name as a parameter. |
+| **Temporal** | Portable: safe, because the step is an activity. Native: the runtime replays the `[Workflow]`. A change to its control flow can throw a non-determinism error. | Use the facilities of Temporal: `Workflow.Patched` / `GetVersion` to gate the change, or Worker Build-ID versioning. Build-ID versioning keeps running instances on the old worker, and new starts use the new build. |
+| **Elsa** | Elsa versions definitions natively. Each running instance stays on the version on which it started. A newly published version applies only to new starts. | The gateway starts `VersionOptions.Latest`. New starts thus use your latest published definition, and in-flight instances finish on their own definitions. To hold back new starts, pin a specific version in the definition handle. |
+| **Restate** | Restate versions deployments natively. In-flight invocations continue to run against the deployment on which they started. A new deployment serves new invocations. | The flow is in the sidecar binary, so a new version is a new sidecar deployment. The deployment model of Restate does the cutover. |
+| **Camunda 8 / Zeebe** (native only) | Camunda versions BPMN process definitions natively. Each running instance stays on the version under which it was created. A new deployment gets a new version number, and only new starts use it. | The gateway starts `.LatestVersion()`. New starts thus use your newest diagram, and in-flight instances drain. Camunda also supports explicit process-instance migration, which maps old activities to new activities. You drive it against the runtime, outside the framework. |
+| **InProc** | Keeps no state across a restart. Use it for tests and demos. A restart loses in-flight instances, so in-flight versioning does not apply. | Not applicable. |
 
-The pattern across the table: on the runtimes that pin definitions natively (Elsa, Restate, Zeebe) an
-in-flight instance is already isolated from a new deployment, and you mostly decide when new starts move
-to the new version. On the event-sourced runtimes (Temporal, Durable Task) the portable flow is safe
-because your code is an activity, and the native flow is where you reach for the runtime's own
-versioning tool.
+The table shows two groups of runtimes:
+
+- Elsa, Restate, and Zeebe pin definitions natively. An in-flight instance is already isolated from a
+  new deployment. Your main decision is when new starts move to the new version.
+- Temporal and Durable Task are event-sourced. The portable flow is safe, because your code is an
+  activity. For the native flow, use the versioning tool of the runtime.
 
 ## Pin-and-drain with no framework machinery
 
-When you need old instances to never touch new code, whether because a change to step state is not
-backward-compatible or because it is a native flow you cannot safely patch, you can segregate the two
-versions today using the same id derivation you already use to trigger flows. `DeterministicInstanceId`
-folds its prefix into the id, so a version token in the prefix gives each version its own id space:
+Pin-and-drain keeps old instances away from new code. Use it when a change to step state is not
+backward-compatible, or when you cannot safely patch a native flow. It uses the same id derivation that
+you use to trigger flows. `DeterministicInstanceId` folds its prefix into the id. A version token in the
+prefix thus gives each version its own id space:
 
 ```csharp
 // v1 in production today
@@ -77,35 +81,44 @@ var id = DeterministicInstanceId.For("onboard", orgId, email);
 var id = DeterministicInstanceId.For("onboard.v2", orgId, email);
 ```
 
-Point your start-side code at the new prefix when you cut over. Keep raising events at the in-flight v1
-instances under the old prefix until they finish, which is the drain. New `onboard.v2` starts get fresh
-ids that cannot collide with the `onboard` instances still running.
+1. At the cutover, point your start-side code at the new prefix.
+2. Continue to raise events at the in-flight v1 instances under the old prefix until they finish. This
+   is the drain.
 
-That id split does the whole job on the runtimes that pin definitions natively (Elsa, Restate, Zeebe),
-and on Temporal or Durable Task portable flows the id space plus a redeploy is enough because the step
-code runs off the replay path. For a native Temporal or Durable Task flow, combine the id-space split
-with a distinct workflow type or orchestration name so the old journals never replay under new code.
+New `onboard.v2` starts get new ids. These ids cannot collide with the `onboard` instances that still
+run.
 
-There is a trade-off to design for. A caller that re-derives an id in order to raise an event has to
-know which version's prefix the target instance is on. During a drain window that usually means trying
-the current version and falling back to the previous one, or holding on to the id you were given at
-start time instead of re-deriving it.
+The id split is sufficient by itself on the runtimes that pin definitions natively (Elsa, Restate,
+Zeebe). On Temporal or Durable Task portable flows, the id space and a redeploy are sufficient, because
+the step code runs off the replay path. For a native Temporal or Durable Task flow, add a distinct
+workflow type or orchestration name to the id-space split. The old journals then never replay under new
+code.
 
-## Why there is no migration
+This pattern has a trade-off to design for. A caller that derives an id again to raise an event must
+know the version prefix of the target instance. During a drain window, the caller usually tries the
+current version and then the previous version. Alternatively, the caller keeps the id that it received
+at start time and does not derive it again.
 
-The framework does not rewrite a running instance from one version's definition into another. That is
-deliberate, and it is a different decision from [why there is no migration between consumption
-models](consumption-models.md#why-theres-no-migration). When you fix code and redeploy, a re-drive runs
-against whatever is currently deployed, which is the roll-forward above; when you need isolation, you
-drain. True in-flight migration, meaning rewriting a running instance's recorded history to a new shape,
-is a runtime-native operation such as Temporal patching or Camunda instance migration, and you drive it
-directly against the engine.
+## No version migration
+
+A running instance stays on the definition of its version. The framework gives two operations for a new
+version:
+
+- **Roll-forward.** When you fix code and redeploy, a re-drive runs against the code that is deployed
+  now. This is the roll-forward above.
+- **Drain.** When you need isolation, drain the old version.
+
+The framework does not rewrite a running instance from the definition of one version into another. This
+decision is deliberate. It is a different decision from [why there is no migration between consumption
+models](consumption-models.md#why-theres-no-migration). In-flight migration rewrites the recorded history
+of a running instance to a new shape. It is a runtime-native operation, for example Temporal patching or
+Camunda instance migration. You drive it directly against the runtime.
 
 ## See also
 
-- [Evolve a running flow](../how-to/evolve-a-running-flow.md) — the recipe that puts this to work.
-- [Consumption models](consumption-models.md) — the portable and native models and the replay paths.
-- [Runtime matrix](../reference/runtime-matrix.md) — the per-runtime evolution summary alongside the
+- [Evolve a running flow](../how-to/evolve-a-running-flow.md): the recipe that applies this page.
+- [Consumption models](consumption-models.md): the portable and native models and the replay paths.
+- [Runtime matrix](../reference/runtime-matrix.md): the per-runtime evolution summary, with the
   other divergences.
-- [The triggering seam](the-triggering-seam.md) — how `DeterministicInstanceId` derives an id, which the
-  pin-and-drain pattern builds on.
+- [The triggering seam](the-triggering-seam.md): how `DeterministicInstanceId` derives an id. The
+  pin-and-drain pattern uses this derivation.

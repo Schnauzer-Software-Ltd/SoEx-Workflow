@@ -3,44 +3,61 @@
 
 # How to author a native flow
 
-In a native flow you author the flow in your runtime's own model (a Temporal `[Workflow]`, a Durable
-Task orchestration, an Elsa graph, the Restate sidecar (`restate-sidecar-rs`), or a Camunda 8 BPMN
-diagram) and call the governed step from each step and the governed termination at the end. This guide
-gives the copy-pasteable shape for each runtime.
+In a native flow, you write the flow in the model of your runtime. Each step of the flow calls the
+governed step. The end of the flow calls the governed termination. The native models are:
 
-> First [write your step component](write-a-step-component.md) (it returns a business result) and
-> [wire the governed core](../reference/governed-core.md) to get `step` and `termination`. For why the
-> runtimes differ, see [Runtimes and durability](../explanation/runtimes-and-durability.md).
+- a Temporal `[Workflow]`
+- a Durable Task orchestration
+- an Elsa graph
+- the Restate sidecar (`restate-sidecar-rs`)
+- a Camunda 8 BPMN diagram
+
+This guide gives the code shape for each runtime. You can copy it into your project.
+
+> Before you start, [write your step component](write-a-step-component.md). It returns a business
+> result. Then [wire the governed core](../reference/governed-core.md) to get `step` and `termination`.
+> [Runtimes and durability](../explanation/runtimes-and-durability.md) explains the differences between
+> the runtimes.
 
 ## Journal only the sealed seed
 
-Because you author the flow, you decide what each step persists, and for crypto-shred to hold, the flow
-must persist only ciphertext. The pattern:
+In a native flow, your flow sets what each step persists. Crypto-shred protects only sealed data. Thus
+the flow must persist only ciphertext. Use this procedure:
 
-1. Seal the subject once into an opaque seed (`step.SealStep(...)`), which mints the key.
-2. Submit that seed as the workflow input and thread it through each step, naming only PII-free kinds.
-3. Recover the subject in clear only inside a step (off the replay path), through the framework, with
-   `step.UnsealStep<T>(...)` / `step.AmbientOf(...)`. Never pass a plaintext DTO or ambient bytes as an
-   activity argument.
+1. Seal the subject one time into an opaque seed with `step.SealStep(...)`.
 
-These shared pieces are reused by every backend snippet below:
+   This call mints the per-instance key.
+
+2. Submit the seed as the workflow input.
+3. Pass the seed through each step, with a PII-free kind name for each step.
+
+   PII is personally identifiable information.
+
+4. Recover the subject in clear text only inside a step, with `step.UnsealStep<T>(...)` or
+   `step.AmbientOf(...)`.
+
+   The step runs off the replay path. The framework does the unseal.
+
+5. Do not pass a plaintext DTO or ambient bytes as an activity argument.
+
+Each runtime snippet in this guide uses these shared parts:
 
 ```csharp
 // What the flow threads between steps: an opaque sealed seed + a PII-free kind.
 public sealed record SealedStep(byte[] Seed, string InstanceId, long Seq);
-public sealed record NativeInput(byte[] Seed);
+public sealed record NativeInput(byte[] Seed, int TimeoutSeconds);
 
 public static class Native
 {
     // Seal the subject once (mints the key). The only subject-bearing thing the flow or backend sees.
-    public static byte[] SealSeed(GovernedStep<IOnboardSteps> step, string instanceId, string email)
+    public static byte[] SealSeed(GovernedStep<IOnboardManager> step, string instanceId, string email)
         => step.SealStep(instanceId, new OnbStep.Lookup(email),
                          WorkflowEnvelope.AmbientFor(step.Serializer, SubjectContext.Managed(email)));
 
     // Called inside a step (off the replay path): recover the subject through the framework, build the
     // kind's DTO, run the governed step. Returns a PII-free outcome.
     public static Task<StepOutcome> RunSealed(
-        GovernedStep<IOnboardSteps> step, string id, long seq, string kind, byte[] seed)
+        GovernedStep<IOnboardManager> step, string id, long seq, string kind, byte[] seed)
     {
         string email = step.UnsealStep<OnbStep.Lookup>(id, seed).Email;          // in memory only
         OnbStep dto = kind switch
@@ -59,15 +76,21 @@ string instanceId = "onb-" + Guid.NewGuid().ToString("N");
 byte[] seed = Native.SealSeed(step, instanceId, "invitee@example.com");
 ```
 
-The result and any event/timer names stay PII-free by your construction; must-retain PII leaves via
-`OnRetaining`. (`IRetainedStore` in the examples is just your own durable sink.)
+You must keep the result, the event names, and the timer names free of PII. Your flow design does this.
+PII that you must keep goes out through `OnRetaining`. In the examples, `IRetainedStore` is your own
+durable store.
 
 ## Durable Task
 
-Extend `GovernedTaskOrchestrator<TIn,TOut>` (its termination hook runs `GovernedTerminationActivity`
-at completion) and author the sequence with `CallActivity`/`WaitForExternalEvent`. Register the
-orchestrator, `GovernedTerminationActivity`, and your step activities on the worker; register
-`termination` in DI.
+1. Extend `GovernedTaskOrchestrator<TIn,TOut>`.
+
+   Its termination hook runs `GovernedTerminationActivity` when the orchestration completes.
+
+2. Write the sequence with `CallActivity` and `WaitForExternalEvent`.
+3. Register the orchestrator on the worker.
+4. Register `GovernedTerminationActivity` on the worker.
+5. Register your step activities on the worker.
+6. Register `termination` in DI.
 
 ```csharp
 public sealed class NativeOnboard : GovernedTaskOrchestrator<NativeInput, string>
@@ -85,10 +108,15 @@ public sealed class NativeOnboard : GovernedTaskOrchestrator<NativeInput, string
 
 ## Temporal
 
-Author a normal `[Workflow]` with its own sequence, `WaitConditionAsync`, and timeout. Each step is an
-`[Activity]` that calls `step.ExecuteAsync`. Register the `GovernedTerminationInterceptor` on the worker
-(it schedules `GovernedTerminationActivities.RunTermination` in a `finally`, off the replay path) and
-register `termination` in DI.
+1. Write a standard `[Workflow]` with its own sequence, `WaitConditionAsync`, and timeout.
+2. Make each step an `[Activity]` that calls `step.ExecuteAsync`.
+3. Register the `GovernedTerminationInterceptor` on the worker.
+
+   The interceptor schedules `GovernedTerminationActivities.RunTermination` when the workflow completes.
+   It also schedules it when the workflow fails or is cancelled. It does not schedule it on continue-as-new.
+   The termination runs as an activity, off the replay path.
+
+4. Register `termination` in DI.
 
 ```csharp
 [Workflow]
@@ -110,28 +138,38 @@ public class NativeOnboard
 // GovernedSteps.Lookup(byte[] seed, long seq) => Native.RunSealed(step, Wf.Info.WorkflowId, seq, "lookup", seed)
 ```
 
-The termination must run only via the interceptor's activity. The key-store mutation is
-non-deterministic and has to stay off the replay path.
+> [!CAUTION]
+> Run the termination only through the activity of the interceptor. The termination changes the key
+> store. This change is non-deterministic, so it must stay off the replay path.
 
 ## Elsa
 
-Author a registered Elsa workflow: each governed step is an activity that calls `step.ExecuteAsync`,
-waits are bookmarks, and the flow ends in `GovernedTerminationActivity`. For a durable host, resolve
-`GovernedStep`/`GovernedTermination` from DI inside the activities so a rehydrated instance on a fresh
-host gets them; `GovernedTerminationActivity` does that itself when you leave `Termination` unset.
+1. Write a registered Elsa workflow.
+2. Make each governed step an activity that calls `step.ExecuteAsync`.
+3. Make each wait a bookmark.
+4. End the flow with `GovernedTerminationActivity`.
+5. For a durable host, resolve `GovernedStep` and `GovernedTermination` from DI inside the activities.
 
-Anchor every step and the termination on the **same id you sealed under**. Elsa mints its own instance id
-per create, which is not that id, so the anchor is the correlation id — what `ElsaWorkflowGateway` sets at
-start, and what `GovernedTerminationActivity` shreds under. Anchoring on `WorkflowExecutionContext.Id`
-instead looks up a key that was never minted: termination appears to run and the crypto-shred silently
-does nothing.
+   A rehydrated instance on a new host then gets them. If you leave `Termination` unset,
+   `GovernedTerminationActivity` resolves it from DI itself.
 
-> Native-flow variables need `.WithWorkflowStorage()` in your Elsa registration for the flow's own variables
-> to persist and rehydrate across a suspend/resume; without it a native Elsa flow that carries state between
-> steps loses it on resume. (The framework's two governed variables — the sealed seed and the PII-free
-> instance id — ride as workflow input; this is about *your* flow's variables.) Elsa production persistence is
-> your choice — the Tier-2 story runs over SQLite, but a real deployment configures Elsa's EF Core / other
-> persistence provider.
+6. Anchor each step and the termination on the **same id that you sealed under**.
+
+   This id is the correlation id. `ElsaWorkflowGateway` sets it at start, and
+   `GovernedTerminationActivity` shreds under it. Elsa mints a different instance id for each create.
+
+> [!WARNING]
+> Do not anchor on `WorkflowExecutionContext.Id`. The key for that id was never minted. The termination
+> seems to run, but the crypto-shred does nothing and gives no error.
+
+The variables of a native flow need `.WithWorkflowStorage()` in your Elsa registration. With this call,
+the variables of your flow persist and rehydrate across a suspend and resume. Without it, a native Elsa
+flow loses the state that it keeps between steps when it resumes. This applies to the variables of your
+flow. The two governed variables of the framework are the sealed seed and the PII-free instance id.
+They go in as workflow input.
+
+You choose the production persistence for Elsa. The Tier-2 tests use SQLite. A real deployment configures
+the Elsa EF Core provider or a different persistence provider.
 
 ```csharp
 var workflow = new Workflow
@@ -151,18 +189,27 @@ var workflow = new Workflow
 
 ## Restate (cross-language)
 
-Restate has no .NET SDK, so you author the flow natively in the sidecar's language, Rust. The Restate
-sidecar drives the sequence, the durable-promise wait, and the termination, calling back to a small
-.NET governed-step host over HTTP: `POST /gov-step` runs `step.ExecuteAsync`, and `POST /gov-terminate`
-runs `termination.TerminateAsync`. See the
-[Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).
+Restate has no .NET SDK. You write the native flow in Rust, the language of the sidecar. The Restate
+sidecar runs the sequence, the durable-promise wait, and the termination. It calls a small .NET
+governed-step host over HTTP:
+
+- `POST /gov-step` runs `step.ExecuteAsync`.
+- `POST /gov-terminate` runs `termination.TerminateAsync`.
+
+The [Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md) gives the details.
 
 ## Camunda 8 / Zeebe (visual BPMN)
 
-The broker owns the flow, so you author it as a BPMN diagram in a visual editor (Camunda Modeler or
-BPMN-js) and deploy the `.bpmn`. Each governed step is a service task whose job a worker handles, with
-its PII-free kind and sequence riding as static task headers; waits are message-catch events correlated
-on the instance id; the termination is a process end execution-listener job. The .NET side:
+On Zeebe, the broker owns the flow. The parts of the flow are:
+
+- Each governed step is a service task. A worker handles its job. The PII-free kind and the sequence go
+  in static task headers.
+- Each wait is a message-catch event. The message correlates on the instance id.
+- The termination is a job of a process end execution listener.
+
+1. Draw the flow as a BPMN diagram in a visual editor, Camunda Modeler or BPMN-js.
+2. Deploy the `.bpmn` file.
+3. Write the .NET side as in this example:
 
 ```csharp
 IZeebeClient client = ZeebeWorkflowHost.Connect("127.0.0.1:26500");
@@ -178,32 +225,47 @@ await gateway.StartAsync(instanceId, seed);                               // see
 await gateway.RaiseEventAsync(instanceId, "invite-accepted");            // a correlated Zeebe message
 ```
 
-**Event data on Zeebe.** A native flow decides for itself which step a raise's data belongs to: keep the
-event your wait received and pass its payload to that one `ExecuteAsync` call. On Zeebe that has a twist,
-because the gateway publishes a raise's payload as the process variable `__event`, and a Zeebe process
-variable persists in its flow scope once set — a worker that forwarded it unconditionally would hand the
-same stale raise to every later step in the scope. So it is opt-in per service task, via an
-`eventVariable` task header naming the variable to read, and you use the `OpenStepWorker` overload whose
-delegate takes the extra `byte[]`:
+### Event data on Zeebe
+
+A native flow sets which step gets the data of a raise. Keep the event that your wait received. Give its
+payload to the one `ExecuteAsync` call that needs it.
+
+On Zeebe, the gateway publishes the payload of a raise as the process variable `__event`. After you set a
+Zeebe process variable, it persists in its flow scope. A worker that always forwards `__event` gives the
+same old raise to each later step in the scope. Thus event data is opt-in for each service task:
+
+1. Add an `eventVariable` task header to the task that follows the catch event.
+
+   The header gives the name of the variable to read. Do not put the header on other tasks.
+
+2. Use the `OpenStepWorker` overload whose delegate takes the extra `byte[]`:
 
 ```csharp
 using var steps = ZeebeWorkflowHost.OpenStepWorker(client, "onboard-step", step,
     async (id, seq, kind, seed, eventData) => await Native.RunSealed(step, id, seq, kind, seed, eventData));
 ```
 
-Put the header on the task that follows the catch event and nowhere else. Clearing the variable afterwards
-is BPMN modelling — an output mapping that overwrites it — not something the framework can do for you.
+3. To clear the variable after the task, add a BPMN output mapping that overwrites it.
 
-The framework writes exactly two process variables: the sealed seed and the PII-free instance id. It
-can't police a consumer's own BPMN io-mappings, so `DeployAsync` lints each resource as it deploys and
-returns the findings (it calls `ZeebeWorkflowHost.ValidateResource` internally — you can also run that
-standalone): each `ZeebeResourceWarning` flags a governed task that copies `seed`/`instanceId` into
-another journaled variable. The warnings are advisory and deployment proceeds regardless, so inspect the
-returned list and decide whether to act or block. Camunda 8 / Zeebe is native-only, since a
-`WorkflowAction` loop isn't expressed on a BPMN graph.
+   This is a part of your BPMN model. The framework cannot clear the variable.
+
+### Check the io-mappings
+
+The framework writes two process variables: the sealed seed and the PII-free instance id. The
+framework cannot control the io-mappings of your own BPMN. Thus `DeployAsync` lints each resource when it
+deploys it, and returns the findings. It calls `ZeebeWorkflowHost.ValidateResource` internally. You can
+also call `ValidateResource` by itself.
+
+Each `ZeebeResourceWarning` identifies a governed task that copies `seed` or `instanceId` into a different
+journaled variable. The warnings are advisory. The deployment continues when there are warnings.
+
+1. Examine the list of warnings that `DeployAsync` returns.
+2. Decide if you correct the mapping or stop the deployment.
+
+Camunda 8 / Zeebe supports the native flow only. A BPMN graph cannot express a `WorkflowAction` loop.
 
 ## Reference
 
-- The [runtime matrix](../reference/runtime-matrix.md) — exactly how each concept maps to each backend.
-- [Runtimes and durability](../explanation/runtimes-and-durability.md) — the durability models and why
-  the termination must stay off the replay path.
+- The [runtime matrix](../reference/runtime-matrix.md) shows how each concept maps to each runtime.
+- [Runtimes and durability](../explanation/runtimes-and-durability.md) describes the durability models.
+  It also tells why the termination must stay off the replay path.

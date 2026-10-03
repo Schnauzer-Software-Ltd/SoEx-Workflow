@@ -1,43 +1,50 @@
 > [!IMPORTANT]
 > This file was LLM generated and is pending editing by the project maintainer.
 
-# Reference — `WorkflowAction`
+# Reference: `WorkflowAction`
 
-The value a portable-model step operation returns; the driver routes it onto the runtime's durable
-primitives. The framework envelopes the typed step/result payloads, so you pass DTOs rather than raw
-bytes. Namespace: `SoEx.Workflow`.
+`WorkflowAction` is the value that a step operation of the portable flow returns. The driver maps the
+action to the durable primitives of the runtime. The framework puts the typed step and result payloads in
+an envelope. Thus, you give DTOs to the action, and the framework makes the bytes. Namespace:
+`SoEx.Workflow`.
 
-When a `WaitForEvent` resumes, the branch it was raised at decides what runs next. If that branch declared
-an `OnEvent` step, that step runs — whether the raise was bare or carried data, and the data is handed to
-your step operation as a second argument. Only a branch that declared no `OnEvent` lets the raiser supply
-the next step itself.
+## Actions
+
+| Action | Meaning |
+|---|---|
+| `Complete(object? Result)` | The instance is complete. `Result` is your typed result. The journal keeps it in clear text, so keep PII out of it. |
+| `RaiseIntoNext(object NextStep)` | Sends the typed `NextStep` DTO to the next step. Use it to move saga state forward. |
+| `WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)` | Parks the instance until a raise of the event of one branch. If you give a `Timeout`, a durable timer races the branches. If the timer wins, the instance resumes into the `OnTimeout` step. If a branch wins, the branch sets the next step, as the table in [Resume after a wait](#resume-after-a-wait) shows. The framework seals each continuation at wait time and the journal keeps it. |
+| `EventBranch(string EventName, object? OnEvent = null)` | One event that can resume a wait. It has the event name and the step that a raise of that name resumes into. |
+| `Delay(TimeSpan Duration)` | Parks the instance on a durable timer. |
+| `Loop(object CarryState)` | Does a continue-as-new and carries the typed `CarryState` to the new run. |
+
+Each action also has `Subjects`. `Subjects` contains the persons that this step found during its run.
+See [Enrolling a subject the step learned](#enrolling-a-subject-the-step-learned).
+
+## Resume after a wait
+
+When a `WaitForEvent` resumes, the branch of the raised event sets the next step. If that branch declares
+an `OnEvent` step, that step runs. This rule applies to a bare raise and to a raise with data. Your step
+operation receives the data as its second argument. If the branch declares no `OnEvent` step, the raiser
+gives the next step.
 
 | Branch declared `OnEvent` | Raise carried | What runs |
 |---|---|---|
 | yes | data | the branch's `OnEvent` step, receiving the data |
 | yes | nothing | the branch's `OnEvent` step |
 | no | data | the raised payload, as the next step |
-| no | nothing | nothing — the raise is rejected |
+| no | nothing | nothing (the framework rejects the raise) |
 
 See [Receiving data with an event](#receiving-data-with-an-event).
 
-| Action | Meaning |
-|---|---|
-| `Complete(object? Result)` | The instance is finished; `Result` is your typed result. Journaled in clear, so keep it PII-free. |
-| `RaiseIntoNext(object NextStep)` | Route the typed `NextStep` DTO into the next step (thread saga state forward). |
-| `WaitForEvent(IReadOnlyList<EventBranch> Branches, TimeSpan? Timeout = null, object? OnTimeout = null)` | Park until one of the branches' events is raised. With `Timeout`, they race a durable timer; if the timer wins, resume into the `OnTimeout` step. Otherwise the branch that was raised decides, per the table above. Every continuation is sealed at wait time and journaled. |
-| `EventBranch(string EventName, object? OnEvent = null)` | One way a wait can be resumed: the event name, and the step a raise of that name resumes into. |
-| `Delay(TimeSpan Duration)` | Park on a durable timer. |
-| `Loop(object CarryState)` | Continue-as-new, carrying the typed `CarryState` across the boundary. |
+## Wait for more than one event
 
-Every action also carries `Subjects`, the people this step learned about while it ran. See
-[Enrolling a subject the step learned](#enrolling-a-subject-the-step-learned).
+A wait can have many branches, one for each event. Each branch states the next step for a raise of its
+event name. Examples:
 
-## Waiting on more than one event
-
-A parked instance often has more than one thing that can happen to it. An onboarding flow waiting for
-an email verification may also offer a resend button; an approval may also be cancelled or escalated.
-Give the wait one branch per event, and each branch says what a raise of its own name means:
+- An onboarding flow waits for an email verification. It also has a resend button.
+- An approval waits for a decision. A user can also cancel or escalate it.
 
 ```csharp
 return new WorkflowAction.WaitForEvent(
@@ -49,25 +56,28 @@ return new WorkflowAction.WaitForEvent(
     OnTimeout: new OnboardStep.Abandon("code expired"));
 ```
 
-All branches race each other and the timer. The alternative is to overload one event name for two
-meanings and tell them apart by whether a payload came with it, which stops working as soon as both
-senders can raise the event bare.
+All branches race each other and the timer. Give each meaning its own event name. If one event name has
+two meanings, the flow must use the presence of a payload to identify the meaning. That method fails when
+both senders can raise the event bare.
 
-Branch order decides the winner when more than one of the events is already deliverable at the moment
-the wait arms. The first branch declared wins, on every runtime, so the choice is a property of your
-flow rather than of the engine's delivery order.
+The order of the branches sets the winner when two or more events are already deliverable at the time the
+wait arms. The first declared branch wins on each runtime. Thus, your flow sets the winner. The delivery
+order of the runtime has no effect.
 
-Two branches of one wait cannot share an event name. The name is the delivery key on every runtime, so
-duplicates could not be told apart at resume; the constructor rejects them.
+The branches of one wait must have different event names. On each runtime, the event name is the delivery
+key. At resume, the runtime can identify a branch only by its name. The constructor rejects duplicate
+names.
 
 ## Receiving data with an event
 
-Often the raiser knows something the flow could not have known when it parked. An invite may be accepted
-by someone other than the person it was sent to; a payment may clear for a different amount than the one
-quoted. The flow still decides which step runs next — it sealed that step at wait time — and the raiser
-contributes only what it knows.
+A raiser can have data that the flow did not have when it parked. Examples:
 
-Declare a second parameter on your step operation to receive it:
+- A different person accepts an invite.
+- A payment clears for an amount that is different from the quoted amount.
+
+The flow sets the next step. It sealed that step at wait time. The raiser gives only its data.
+
+To receive the data, declare a second parameter on your step operation:
 
 ```csharp
 public interface IOnboardManager
@@ -76,71 +86,79 @@ public interface IOnboardManager
 }
 ```
 
-It is non-null only on a step that a data-carrying raise resumed into, and only for that one dispatch —
-the data does not travel on to later steps. Seal it on the raising side with `SealEventData`, which is a
-different seal from the `Seal` that supplies a step:
+The parameter has a value only on a step that a raise with data resumed into. It has the value for that
+one dispatch only. Later steps do not receive the data. On the raise side, seal the data with
+`SealEventData`. `SealEventData` is a different seal from the `Seal` that gives a step:
 
 ```csharp
 await gateway.RaiseEventAsync(instanceId, "invite-accepted",
     sealer.SealEventData(instanceId, new InviteAccepted(whoAccepted)));
 ```
 
-Two things are worth knowing:
+These rules apply:
 
-- **The two seals are not interchangeable.** Sealing a step where data is expected, or data where a step
-  is expected, is refused with a message naming both types — not quietly reinterpreted.
-- **Raising data at an operation with no second parameter fails loudly.** The instance parks with its key
-  retained rather than running the continuation as though nothing had been sent; re-drive it once the
-  component declares the parameter. This is the one case where adding data to an existing raise changes
-  the behaviour of a flow that is already in flight.
+- **Use the correct seal.** If you seal a step where the flow expects data, or data where it expects a
+  step, the framework refuses the payload. The error message names both types.
+- **Declare the parameter before you raise data at an operation.** If the operation has no second
+  parameter, the raise fails. The instance parks and the framework keeps its key. The continuation does not
+  run. After the component declares the parameter, re-drive the instance. In this one case, data on an
+  existing raise changes the behavior of a flow that is in flight.
 
-Event data carries no ambient context of its own. The flow's own subject context travels on the
-continuation, as it has since the seed, and a subject the raise tells you about is enrolled through
-`Subjects` rather than by riding in on the data.
+Event data has no ambient context. The subject context of the flow travels on the continuation from the
+seed. To enroll a subject that the raise tells you about, use `Subjects`. The event data does not enroll a
+subject.
 
 ## Notes
 
-- `OnEvent` is the branch-level twin of `OnTimeout`: it lets a bare event (no payload, no key material)
-  resume a wait into a pre-decided step. See
+- `OnEvent` is the branch-level equivalent of `OnTimeout`. With `OnEvent`, a bare event resumes a wait into
+  a step that the flow selected before. A bare event has no payload and no key material. See
   [Trigger flows from outside](../how-to/trigger-flows-from-outside.md#raise-an-event-with-no-payload).
-- `Loop` carries the logical instance id and per-instance key across the continue-as-new boundary, and
-  the carried state is sealed like any other journaled payload.
-- A branch with no `OnEvent` rejects a bare raise at that name, because the flow declared no meaning
-  for it. It still accepts a payload, which then becomes the next step.
-- The `OnTimeout` path never carries event data — nothing was raised.
-- `WaitForEvent` has a single constructor by design. The action travels through your host's message
-  serializer as a polymorphic response, and a second public constructor leaves the serializer no
-  unambiguous way to rebuild the value, so a one-name convenience overload cannot exist.
+- `Loop` carries the logical instance id and the per-instance key to the new run. The framework seals the
+  carried state as it seals all other journaled payloads.
+- A branch with no `OnEvent` rejects a bare raise at that name, because the flow declared no meaning for
+  it. The branch accepts a payload, and the payload becomes the next step.
+- The `OnTimeout` path has no event data, because there was no raise.
+- `WaitForEvent` has one constructor only. The action goes through the message serializer of your host as
+  a polymorphic response. The serializer must have one unambiguous constructor to rebuild the value. Thus,
+  a convenience overload with one name is not possible.
 
 ## Enrolling a subject the step learned
 
-The subject a flow starts with is the one its caller knew. A step often discovers another: a lookup
-returns the account's billing contact, a claim names a dependant. The step is what knows, so the step
-says so, on the action it returns.
+A flow starts with the subject that its caller knew. A step can find a different subject. Examples:
+
+- A lookup returns the billing contact of the account.
+- A claim names a dependant.
+
+The step has this knowledge. Thus, the step declares the subject on the action that it returns:
 
 ```csharp
 return new WorkflowAction.RaiseIntoNext(new PolicyStep.Notify(policyId))
     .Enrolling(billingContact);
 ```
 
-Before the action is flattened for the journal, the framework folds those subjects into the step's
-subject context. Two things follow from that. An erasure request for that person now reaches this
-instance, including while it sits parked on a wait for days. And from this step on the subject is
-guarded out of every name the runtime journals in clear, the same as the subject the flow started with.
+Before the framework flattens the action for the journal, it adds those subjects to the subject context of
+the step. This has two results:
 
-The subject itself never reaches the journal. It travels on the sealed continuation, which the
-crypto-shred can reach. The flattened action a runtime records carries only the kind, the event names,
-and sealed bytes.
+- An erasure request for that person now finds this instance. This is also true while the instance is
+  parked on a wait for many days.
+- From this step on, the guard removes the subject from each name that the runtime journals in clear text.
+  The guard does the same for the start subject of the flow.
 
-Declare it on an action that continues the flow: `RaiseIntoNext`, `WaitForEvent`, `Loop` or `Complete`.
-A `Delay` seals no next step for the subject to travel on, so an enrollment on one is rejected rather
-than half applied.
+The subject does not go into the journal. It travels on the sealed continuation, which crypto-shred
+destroys. The flattened action that a runtime records contains only the kind, the event names, and sealed
+bytes.
 
-Two limits worth knowing. The guard is prospective: names already journaled for this instance were
-checked against the subjects known at the time, and enrolling someone now does not re-examine them. And
-an externally-managed flow (`SubjectContext.External`) keeps deferring indexing to your own system, as
-it does for the subject it started with; the subject is still carried, so the name guards cover it.
+Declare the subject on an action that continues the flow: `RaiseIntoNext`, `WaitForEvent`, `Loop`, or
+`Complete`. A `Delay` seals no next step, so the subject has nothing to travel on. Thus, the framework
+rejects an enrollment on a `Delay`. It does not apply part of the enrollment.
 
-Reading the enrollment back is the job of `InstancesForAsync` on the utility's subsystem face. A
-subject learned mid-run is the case it exists for: the instance id was derived from the subject the flow
-started with, so no derivation from the person you learned about later reaches it.
+Two limits apply:
+
+- The guard applies to names from this step forward. The framework checked earlier names of this instance
+  against the subjects that it knew at that time. A new enrollment does not examine these names again.
+- An externally-managed flow (`SubjectContext.External`) leaves the indexing to your own system. This also
+  applies to its start subject. The framework still carries the subject, so the name guards include it.
+
+To read the enrollment back, use `InstancesForAsync` on the subsystem face of the utility. Its purpose is a
+subject that a flow found during its run. The instance id comes from the start subject of the flow. Thus,
+a derivation from the later subject cannot find the instance.

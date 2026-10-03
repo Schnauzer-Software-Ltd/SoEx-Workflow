@@ -1,31 +1,46 @@
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
+
 # Host: all flows · Durable Task · Durable Task Scheduler
 
-Runs every flow in one continuous process against a Durable Task Scheduler (the DTS emulator on
-`localhost:8080` in dev). The worker stays up for the whole run and the scheduler holds the durable
-state; a person drives the flows from the browser. One task hub, both consumption models coexisting by
-orchestration name.
+This host runs all flows against a Durable Task Scheduler. In development, this is the DTS emulator on
+`localhost:8080`. The host is a web control panel on port 5003. It runs until you stop it. The worker runs
+for the life of the host, and the scheduler holds the durable state. You operate each flow from the
+browser, one event at a time. The host uses one task hub. The
+orchestration name keeps the two consumption models apart.
 
-- **A Onboarding** — native flow: a consumer-authored orchestration of governed step activities with a
-  wait-for-accept, and the base-orchestrator termination activity that shreds the key.
-- **B Subscription** — portable flow: continue-as-new renewal across the periods, with the idempotency
-  store enabled (each generation's charge applies once).
-- **C Offboarding** — native flow: an orchestration fanning out governed revocations across systems in
-  parallel, with the termination hook.
-- **D Erasure** — `ErasureCoordinator` "forget subject S" over in-flight instances: force-terminate →
-  crypto-shred + index prune, with a subject-level report.
+- **A Onboarding**: native flow. An orchestration that the consumer wrote runs governed step activities
+  and a wait for the accept. The termination activity of the base orchestrator shreds the key.
+- **B Subscription**: portable flow. Continue-as-new renews across the periods. The idempotency store is
+  enabled, so the charge of each generation applies one time.
+- **C Offboarding**: native flow. An orchestration fans out governed revocations across systems in
+  parallel. It has the termination hook.
+- **D Erasure**: the **Forget subject** button sends an erasure request for the subject. The host admits
+  the request, then drains it at once. The drain uses `ErasureCoordinator`. Each in-flight instance of the
+  subject goes through a forced termination, then crypto-shred and an index prune.
 
-## Requires a Durable Task Scheduler
+## Requirement: a Durable Task Scheduler
 
-This host needs a Durable Task Scheduler on `localhost:8080` (the DTS emulator, Docker). If none is
-reachable it prints a message and exits.
+This host needs a Durable Task Scheduler on `localhost:8080` (the DTS emulator, Docker). The host
+connects to task hub `default` with no authentication. If the host cannot reach the scheduler, it prints a
+message and stops. The message gives the command that starts the emulator:
+`docker run -p 8080:8080 mcr.microsoft.com/dts/dts-emulator`. Alternatively,
+`examples/dev/piimaker.sh --runtime durabletask` starts the emulator and the host.
 
 ```bash
 dotnet run --project examples/PiiMaker/Hosts/DurableTask/PiiMaker.Host.DurableTask.csproj
 ```
 
-## Note: continue-as-new carries the step sequence
+The host prints the address of the panel. Open it in a browser:
 
-Renewal (B) runs with the idempotency store. The portable-flow drivers carry the per-step sequence
-across continue-as-new generations (Durable Task via the run input), so the idempotency key
-`(InstanceId, DtoType, Sequence)` stays unique for the instance's whole life — a fresh generation never
-reuses sequence 0 and collides with the previous generation's first step.
+```
+PiiMaker DurableTask control panel → http://localhost:5003  (scheduler localhost:8080)
+```
+
+## Continue-as-new carries the step sequence
+
+Renewal (B) runs with the idempotency store. The portable-flow drivers carry the sequence of each step
+across continue-as-new generations. Durable Task carries it in the run input. Thus the idempotency key
+`(InstanceId, DtoType, Sequence)` stays unique for the full life of the instance. A new generation never
+uses sequence 0 again. Thus its first step does not collide with the first step of the previous
+generation.

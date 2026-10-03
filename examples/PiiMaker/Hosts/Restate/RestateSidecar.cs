@@ -41,12 +41,12 @@ internal static class RestateSidecar
         catch { /* cargo unavailable — caller reports when the binary is still absent */ }
     }
 
-    public static Process Start(string bin, string dir)
+    public static Process Start(string bin, string dir, string stepToken)
     {
         var psi = new ProcessStartInfo(bin) { WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true };
         psi.Environment["STEP_URL"] = "http://127.0.0.1:9091";
         psi.Environment["PORTABLE_STEP_URL"] = "http://127.0.0.1:9092";   // MembershipPortable -> the renewal /step host
-        psi.Environment["STEP_TOKEN"] = "pii-example-token";
+        psi.Environment["STEP_TOKEN"] = stepToken;   // must match the token the .NET callback hosts check
         psi.Environment["BIND"] = "127.0.0.1:9081";
         Process proc = Process.Start(psi) ?? throw new InvalidOperationException("failed to start the Restate sidecar");
         proc.OutputDataReceived += (_, _) => { };

@@ -3,93 +3,107 @@
 
 # Runtimes and durability
 
-SoEx.Workflow runs on six runtimes — five durable production engines (Durable Task, Temporal, Elsa,
-Restate, Camunda 8 / Zeebe) plus in-process, which is for tests and demos and keeps no state across a
-restart — and they don't all work the same way underneath. This page explains the durability models, how
-the SoEx governance maps onto each, and why some behaviors legitimately differ between them. For the
-tables, see the [runtime matrix](../reference/runtime-matrix.md).
+SoEx.Workflow runs on six runtimes. Five are durable production runtimes: Durable Task, Temporal, Elsa,
+Restate, and Camunda 8 / Zeebe. The sixth, InProc, keeps no state across a restart. Use InProc for tests
+and demos. Each runtime has its own durability mechanism. This page describes the durability models, how
+the SoEx governance maps onto each runtime, and why some behaviors are different on different runtimes.
+The [runtime matrix](../reference/runtime-matrix.md) gives the tables.
 
-## The governance is the constant
+## The governed step is the same on each runtime
 
-Start from what doesn't change. On every runtime, a governed step is invoked the same way (through the
-SoEx endpoint pipeline into your component), and the same per-step governance (key, subject index,
-idempotency) and the same termination lifecycle apply. Your step code is identical everywhere. What
-changes is the flow around the steps and the durability mechanism underneath them.
+On each runtime, the SoEx endpoint pipeline calls your component for each governed step. The same
+per-step governance applies: the key, the subject index, and idempotency. The same termination lifecycle
+applies. Your step code is the same on each runtime. Two things change from runtime to runtime: the flow
+around the steps, and the durability mechanism below them.
 
 ## Four durability models
 
-Durable execution means an instance survives process death and resumes. There are a few fundamentally
-different ways to achieve that, and the runtimes split across them.
+Durable execution means that an instance survives the death of its process and then resumes. The
+runtimes use four models to do this.
 
-**Event-sourced replay** (Durable Task, Temporal). State is rebuilt by replaying a journal of events.
-This has a sharp consequence: flow code must be deterministic, because it's re-executed on replay.
-Anything non-deterministic (wall-clock reads, random ids, and above all the key-store mutation at the
-termination) must run off the replay path, inside an activity. This is why the native-flow termination
-always runs via an interceptor's activity rather than inline in the workflow.
+**Event-sourced replay** (Durable Task, Temporal). The runtime rebuilds the state when it replays a
+journal of events. The runtime runs the flow code again on replay, so the flow code must be
+deterministic. Each non-deterministic operation must run off the replay path, inside an activity.
+Examples are wall-clock reads, random ids, and the most important one: the key-store mutation at the
+termination. For this reason, the native-flow termination on these runtimes always runs in an activity,
+never inline in the workflow. On Durable Task, a base orchestrator schedules the termination activity
+from a `finally` block. On Temporal, a worker interceptor schedules it.
 
-**Checkpoint/resume** (Elsa). State is persisted at bookmarks and resumed from them. The flow parks on
-a bookmark; an event resumes it. There's no replay, so determinism is less of a constraint, but resume
-is driven by correlation rather than a re-run.
+**Checkpoint/resume** (Elsa). The runtime persists the state at bookmarks and resumes from them. The flow
+parks on a bookmark, and an event resumes it. Elsa does not replay, so determinism is less of a
+constraint. A correlation drives the resume, and the flow code does not run again.
 
-**Journalled, out-of-process** (Restate). The flow runs in a separate process (the Restate sidecar)
-that journals each durable step and calls back into .NET over HTTP. The governance lives entirely on
-the .NET side; Restate sees only ciphertext.
+**Journalled, out-of-process** (Restate). The flow runs in a separate process, a Rust sidecar. The
+sidecar journals each durable step and calls back into .NET over HTTP. All of the governance is on the
+.NET side. Restate sees only ciphertext.
 
-**Broker-journalled** (Camunda 8 / Zeebe). The broker owns the flow as a BPMN graph and journals
-process variables. The .NET side is just job workers and a termination listener.
+**Broker-journalled** (Camunda 8 / Zeebe). The broker owns the flow as a BPMN graph and journals the
+process variables. The .NET side contains only job workers and a termination listener.
 
 ## How the model maps
 
-Across all of them the mapping has the same shape (a flow, governed steps, a termination hook),
-realized in each engine's primitives:
+Each runtime has the same three parts: a flow, governed steps, and a termination hook. Each runtime
+implements these parts with its own primitives:
 
 | | Flow is… | A step is… | The termination is… |
 |---|---|---|---|
-| Durable Task | an orchestration | a `CallActivity` → governed step | a base-orchestrator `finally` → termination activity |
-| Temporal | a `[Workflow]` | an `[Activity]` → governed step | an interceptor-scheduled termination activity |
-| Elsa | a registered graph | an activity → governed step | a termination activity in the graph |
-| Restate | the Restate sidecar | a `ctx.run` → `/gov-step` callback | a final `ctx.run` → `/gov-terminate` callback |
+| Durable Task | an orchestration | a `CallActivity` → governed step | a base-orchestrator `finally` → termination activity. A continue-as-new skips it. |
+| Temporal | a `[Workflow]` | an `[Activity]` → governed step | a worker interceptor that schedules the termination activity on completion, failure, or cancel. A continue-as-new skips it. |
+| Elsa | a registered graph | an activity → governed step | `GovernedTerminationActivity` as the last step of the graph. It runs one time, as a normal step. |
+| Restate | a Rust Restate service in your sidecar | a `ctx.run` → `/gov-step` callback | a final `ctx.run` → `/gov-terminate` callback |
 | Zeebe | a BPMN diagram | a service-task job → governed step | a process end execution-listener job |
 | InProc | the portable flow | a driver-driven dispatch | the driver's completion path |
 
-The portable flow collapses the "flow" column into a single generic driver; the native flows let you
-write each one in the engine's own idiom. InProc is in this table because it runs the same governed
-step and termination, but it is **not** one of the four durability models above: it holds state in memory
-only and nothing survives a restart, so it is for tests and demos, not production.
+In the portable flow, one generic driver is the flow on each runtime. In a native flow, you write each
+flow in the idiom of its runtime. InProc runs the same governed step and the same termination. It holds
+state in memory only, and it loses all state on a restart. InProc is thus **not** one of the four
+durability models above. Use it for tests and demos, and do not use it in production.
 
-## Why the trigger semantics diverge
+## Trigger semantics on each runtime
 
-It would be convenient if start and raise behaved identically everywhere, but they can't, because the
-engines have different models of identity and signaling.
+Start and raise operations behave differently on different runtimes. Each runtime has its own model of
+identity and of signals.
 
-A duplicate start means different things to different engines. Restate keys a workflow by a value that
-runs once ever, so a second start is a silent no-op. Temporal rejects an already-started id. InProc
-frees a completed id so it can be re-onboarded as a fresh generation. None of these is wrong; they're
-different identity models.
+A duplicate start has a different result on each runtime:
 
-A raise that arrives before its wait is armed is buffered on engines with durable signals (Temporal,
-Durable Task), resolved into a promise on Restate, but rejected on Elsa, where a resume needs a bookmark
-that doesn't exist yet.
+- Restate keys a workflow by a value that runs one time only. A second start raises
+  `WorkflowInstanceAlreadyExistsException`, also after the first run completes.
+- Temporal rejects an id that already started.
+- InProc frees the id of a completed instance. You can then onboard that id again as a new generation.
 
-Idempotent raises are deduped by a per-instance handled-id set on some engines, by a write-once durable
-promise on Restate (which makes the `raiseId` advisory), and on Elsa, which has no in-flow place to
-record handled ids, by routing the resume through a wired idempotency store.
+Each of these behaviors is correct for its identity model.
 
-The library's stance is to expose these differences plainly in the matrix rather than emulate a single
-behavior everywhere, which would mean degrading every engine to the weakest common denominator, or
-hiding edge cases that bite in production. The conformance test pins the happy path identical; the
-matrix documents the edges.
+A raise can arrive before its wait is armed. The result depends on the runtime:
+
+- Temporal and Durable Task have durable signals. They buffer the raise.
+- Restate resolves the raise into a promise.
+- Elsa rejects the raise. A resume needs a bookmark, and the bookmark does not exist yet.
+
+Each runtime deduplicates idempotent raises with its own mechanism:
+
+- InProc, Durable Task, and Temporal use a per-instance set of handled ids. On InProc, the set lasts for
+  the life of the instance. On Durable Task and Temporal, the set is for one generation, and it resets at
+  continue-as-new.
+- Restate uses a write-once durable promise. This makes the `raiseId` advisory.
+- Elsa has no place in the flow to record handled ids. It routes the resume through a configured
+  idempotency store.
+- Camunda 8 / Zeebe removes duplicates by the broker message id, within the message TTL.
+
+The library keeps the native behavior of each runtime and shows the differences in the matrix. One
+emulated behavior on all runtimes would reduce each runtime to the weakest common behavior. It would
+also hide edge cases that cause failures in production. The conformance test makes sure that the happy
+path is the same on each runtime. The matrix documents the edges.
 
 ## What stays off the replay path
 
-The most common native-flow footgun bears repeating: on the replay engines, the per-instance key
-mutation at the termination is non-deterministic and must run inside an activity, never inline in the
-workflow body. SoEx's termination hooks do this for you (the Temporal interceptor, the Durable Task
-base orchestrator's termination activity), which is why you wire the provided hook rather than calling
-the termination yourself from flow code.
+On the replay runtimes, the per-instance key mutation at the termination is non-deterministic. It must
+run inside an activity, never inline in the workflow body. This is the most common error in a native
+flow. The SoEx termination hooks do this for you. They are the Temporal interceptor and the termination
+activity of the Durable Task base orchestrator. Configure the provided hook. Do not call the termination
+yourself from flow code.
 
 ## See also
 
-- [Runtime matrix](../reference/runtime-matrix.md) — the per-runtime tables.
-- [Consumption models](consumption-models.md) — why the two models produce incompatible journals.
-- [Author a native flow](../how-to/author-a-native-flow.md) — the per-runtime recipes.
+- [Runtime matrix](../reference/runtime-matrix.md): the per-runtime tables.
+- [Consumption models](consumption-models.md): why the two models produce incompatible journals.
+- [Author a native flow](../how-to/author-a-native-flow.md): the per-runtime recipes.

@@ -3,18 +3,27 @@
 
 # How to trigger flows from outside
 
-External triggers don't run where the flow was wired: an identity provider's webhook says "this account
-was verified", a payment processor says "this card was updated". Those callers hold only business
-identity (an org plus an email, a subscriber id), with no instance handle and no knowledge of the
-flow's steps. This guide shows how to start and raise events on a flow from such a caller.
+This guide shows how an external caller starts a flow and raises events on it. An external caller is
+code that runs outside the place where you wired the flow. Two examples are the webhook of an identity
+provider ("this account was verified") and a payment processor ("this card was updated").
 
-Three pieces compose into one small operation on your entrypoint.
+An external caller holds only business identity, for example an org and an email, or a subscriber id.
+It has no instance handle. It has no knowledge of the steps of the flow.
+
+You combine three parts into one small operation on your entrypoint:
+
+1. A deterministic instance id.
+2. A sealer for the seed.
+3. A gateway.
 
 ## 1. Derive the instance id from business identity
 
-Instance ids are journaled in clear, so they must be PII-free. `DeterministicInstanceId` derives a
-PII-free id from identity, and it's stateless: the code that starts the flow and the webhook that
-continues it months later derive the same id from the same identity, with no lookup:
+The runtime journal keeps instance ids in clear text. Thus an instance id must contain no PII.
+`DeterministicInstanceId` derives an instance id with no PII from business identity. It keeps no state.
+The code that starts the flow and the webhook that continues it months later derive the same id from the
+same identity. They do no lookup.
+
+1. Call `DeterministicInstanceId.For` with a flow prefix and the business identity.
 
 ```csharp
 string instanceId = DeterministicInstanceId.For("onboard", orgId, email);
@@ -22,40 +31,57 @@ string instanceId = DeterministicInstanceId.For("onboard", orgId, email);
 // (the suffix folds in the "onboard" prefix, so the same identity under a different flow gets a different id)
 ```
 
-> The unkeyed `For` is confirmable: anyone holding a candidate identity can re-derive it. When the id
-> must be unguessable, use `DeterministicInstanceId.Keyed(...)` — see
+> The unkeyed `For` is confirmable. A person who holds a candidate identity can derive the id again. If
+> the id must be unguessable, use `DeterministicInstanceId.Keyed(...)`. See
 > [Authorize the gateway seam](authorize-the-gateway-seam.md).
 
 ## 2. Seal the first step without holding the endpoint
 
-Starting a flow needs a sealed seed, but the component reacting to the trigger usually can't hold the
-dispatch endpoint. `WorkflowSealer` is the seal side alone (key store + serializer + the operation
-name):
+To start a flow, you need a sealed seed. The component that reacts to the trigger usually cannot hold the
+dispatch endpoint. `WorkflowSealer` does the seal operation only. It uses a key store, a serializer, and
+the name of the step operation.
+
+1. Create a `WorkflowSealer` with the key store, the serializer, and the operation name.
+2. Call `Seal` with the instance id, the first step DTO, and the ambient bytes.
 
 ```csharp
-var sealer = new WorkflowSealer(keys, serializer, nameof(IOnboardSteps.Run));
+var sealer = new WorkflowSealer(keys, serializer, nameof(IOnboardManager.Run));
 byte[] seed = sealer.Seal(instanceId, new OnboardStep.Lookup(email), ambient);
 ```
 
 ## 3. Start and raise events through one interface
 
-`IWorkflowGateway` is the client seam every adapter implements:
+`IWorkflowGateway` is the client seam. Each adapter implements it.
+
+1. Select the gateway for your runtime.
+2. Call `StartAsync` with the instance id and the seed to submit a new instance.
+3. Call `RaiseEventAsync` with the instance id and an event name to raise an event on a running instance.
 
 ```csharp
 await gateway.StartAsync(instanceId, seed);                       // submit a new instance
 await gateway.RaiseEventAsync(instanceId, "account-verified");    // raise a named event at a running one
 ```
 
-Pick the gateway for your runtime: `InProcWorkflowGateway<I>`, `DurableTaskWorkflowGateway`,
-`TemporalWorkflowGateway`, `ElsaWorkflowGateway`, `RestateWorkflowGateway`, or `ZeebeWorkflowGateway`.
-The interface is uniform, but start-idempotency and raise-before-wait semantics differ per engine.
-Check the [per-adapter table in the runtime matrix](../reference/runtime-matrix.md#gateway-semantics)
-before you rely on an edge behavior.
+These are the gateways for each runtime:
+
+- `InProcWorkflowGateway<I>`
+- `DurableTaskWorkflowGateway`
+- `TemporalWorkflowGateway`
+- `ElsaWorkflowGateway`
+- `RestateWorkflowGateway`
+- `ZeebeWorkflowGateway`
+
+The interface is the same on each runtime. Start idempotency and the behavior of a raise before a wait
+are different on each runtime. Before you use an edge behavior, read the
+[per-adapter table in the runtime matrix](../reference/runtime-matrix.md#gateway-semantics).
 
 ## Raise an event with no payload
 
-A portable wait can pre-decide what a bare event means by giving `WaitForEvent` an `OnEvent`
-continuation, sealed at wait time and journaled just like `OnTimeout`:
+A portable wait can set the meaning of a bare event in advance. A bare event is an event with no payload.
+The `OnEvent` continuation of an event branch gives this meaning. The framework seals the `OnEvent` step at
+wait time and journals it, the same as `OnTimeout`.
+
+1. Give each event branch of `WaitForEvent` an `OnEvent` step.
 
 ```csharp
 return new WorkflowAction.WaitForEvent(
@@ -64,21 +90,32 @@ return new WorkflowAction.WaitForEvent(
     OnTimeout: new OnboardStep.Release(reservationId));                                    // the timer fired
 ```
 
-Now `gateway.RaiseEventAsync(instanceId, "account-verified")` resumes the wait into the journaled
-`OnEvent` step, with no payload, no flow knowledge, and no key material on the caller's side. A bare raise
-into a wait with no `OnEvent` fails, because the flow declared no meaning for it.
+2. Call `gateway.RaiseEventAsync(instanceId, "account-verified")` from the caller.
 
-A branch that declared an `OnEvent` runs it whether the raise was bare or carried data — a raiser does not
-displace the step the flow chose. To send data along with the raise, seal it with `SealEventData` and
-receive it as a second parameter on your step operation; see
-[Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event). Only a branch
-that declared no `OnEvent` lets a raised payload be the next step itself, and that is the one case where
-the caller has to know the flow well enough to author it.
+The wait resumes into the journaled `OnEvent` step. The caller sends no payload. The caller needs no
+knowledge of the flow and no key material.
+
+If a wait has no `OnEvent`, a bare raise into it fails. The flow gave no meaning to the bare event.
+
+If a branch has an `OnEvent`, that step always runs. It runs for a bare raise and for a raise with data.
+The step that the flow chose stays the next step.
+
+To send data with the raise:
+
+1. Seal the data with `SealEventData`.
+2. Receive the data as a second parameter on your step operation.
+
+See [Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event).
+
+If a branch has no `OnEvent`, the raised payload becomes the next step. Seal that step with `Seal`. In
+this case only, the caller must know the flow well enough to write that step.
 
 ## Let more than one event resume a wait
 
-Give the wait a branch per event when a parked instance can be resumed by more than one thing. Each
-branch names its event and the step a bare raise of that name means, and all of them race the timer:
+A waiting instance can resume on more than one event. Give the wait one branch for each event. Each
+branch names its event and the step that a bare raise of that name starts. All branches race the timer.
+
+1. Add one `EventBranch` for each event name to `WaitForEvent`.
 
 ```csharp
 return new WorkflowAction.WaitForEvent(
@@ -90,26 +127,36 @@ return new WorkflowAction.WaitForEvent(
     OnTimeout: new OnboardStep.Abandon("code expired"));
 ```
 
-Callers raise as before; the branch is chosen by the name they raise. Two callers that mean different
-things no longer have to share one event name, so a genuine verification arriving alongside a resend
-resumes the flow instead of being lost to whichever raise got there first.
+2. Order the branches by priority.
+3. Raise events from the callers with the same call as before.
 
-If both events are already deliverable when the wait arms, the first branch declared wins, on every
-runtime. Order the branches by what should take priority.
+The name of the raised event selects the branch. Two callers with different meanings use different event
+names. Thus, if a real verification and a resend arrive together, the flow resumes on the correct branch.
+The framework loses neither raise.
 
-One caveat on Restate: its durable promises are write-once per event name per generation, so a branch
-that can be raised repeatedly (a resend button is the usual case) only fires once unless the flow
-takes a `Loop` after handling it. See the
-[multi-branch row of the runtime matrix](../reference/runtime-matrix.md#gateway-semantics).
+If two events can be delivered when the wait starts, the first declared branch wins. This is true on
+each runtime.
 
-To make a specific raise idempotent, pass a stable `raiseId`; see the
-[idempotent-raise row of the matrix](../reference/runtime-matrix.md#gateway-semantics) for per-engine
-behavior.
+> [!CAUTION]
+> Add a `Loop` after a repeatable branch on Restate. On Restate, a durable promise is write-once for
+> each event name in each generation. Thus a branch that callers raise many times fires only once. A
+> resend button is the usual example. The branch fires again only if the flow takes a `Loop` after it
+> handles the branch. See the
+> [multi-branch row of the runtime matrix](../reference/runtime-matrix.md#gateway-semantics).
+
+To make one raise idempotent:
+
+1. Pass a stable `raiseId` to the raise.
+
+The behavior is different on each runtime. See the
+[idempotent-raise row of the matrix](../reference/runtime-matrix.md#gateway-semantics).
 
 ## Put it together
 
-The trigger seam becomes an ordinary operation on your entrypoint, and callers need nothing beyond the
-business identity:
+The trigger seam is an ordinary operation on your entrypoint. Callers give only the business identity.
+
+1. Add a start operation that derives the id, seals the seed, and calls `StartAsync`.
+2. Add one operation for each event that derives the id and calls `RaiseEventAsync`.
 
 ```csharp
 public async Task<string> BeginOnboarding(string orgId, string email)
@@ -123,12 +170,12 @@ public Task AccountVerified(string orgId, string email) =>
     gateway.RaiseEventAsync(DeterministicInstanceId.For("onboard", orgId, email), "account-verified");
 ```
 
-The examples' `IMembershipManager` ([`examples/`](../../examples/README.md)) is the worked version of
-this seam, driven on all six runtimes as an interactive web control panel.
+The `IMembershipManager` in the examples ([`examples/`](../../examples/README.md)) is the full version of
+this seam. It runs on all six runtimes as an interactive web control panel.
 
 ## Next
 
-- [Authorize the gateway seam](authorize-the-gateway-seam.md) — enforce auth at this chokepoint and
-  make ids unguessable.
-- [Triggering reference](../reference/triggering.md) — exact signatures.
-- [The triggering seam](../explanation/the-triggering-seam.md) — the design and its guarantees.
+- [Authorize the gateway seam](authorize-the-gateway-seam.md): enforce authorization at the gateway and
+  make instance ids unguessable.
+- [Triggering reference](../reference/triggering.md): the signatures.
+- [The triggering seam](../explanation/the-triggering-seam.md): the design and its guarantees.

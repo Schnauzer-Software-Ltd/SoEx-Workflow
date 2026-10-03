@@ -3,254 +3,303 @@
 
 # Glossary
 
-The terms used across the SoEx.Workflow docs, grouped by theme. For the narrative, start with the
-[tutorials](../tutorials/01-your-first-workflow.md); this page is the lookup.
+This page defines the terms of the SoEx.Workflow docs. The terms are in groups by topic. Use this page
+to find a term. For a step-by-step introduction, start with the
+[tutorials](../tutorials/01-your-first-workflow.md).
 
 ## Consumption models
 
-**Consumption model** — One of the two ways to consume SoEx.Workflow: the *native flow* or the
-*portable flow*. You pick exactly one per instance.
+**Consumption model** — A consumption model is one of the two ways to use SoEx.Workflow: the *native
+flow* or the *portable flow*. You choose one model for each instance.
 
-**Native flow** — The model where you author the flow in your runtime's own model (a Temporal
-`[Workflow]`, a Durable Task orchestration, an Elsa graph, the Restate sidecar (`restate-sidecar-rs`), a
-Camunda 8 BPMN diagram). Your step component returns a *business result*, and a per-backend *termination hook* runs
-`GovernedTermination`. Full backend expressiveness, at the cost of a flow per backend. See
+**Native flow** — The native flow is the consumption model in which you write the flow in the model of
+your runtime. Examples are a Temporal `[Workflow]`, a Durable Task orchestration, an Elsa graph, a Rust
+Restate service in a *sidecar*, and a Camunda 8 BPMN diagram. Your step component returns a
+*business result*. A *termination hook* for each runtime runs `GovernedTermination`. You get all the
+features of each runtime. You write one flow for each runtime. See
 [Author a native flow](../how-to/author-a-native-flow.md).
 
-**Portable flow** — The model where you write one component whose step operation returns a
-*`WorkflowAction`*, and SoEx's generic per-backend *driver* drives it. The same component runs unchanged
-on every runtime. See [Run the portable flow](../how-to/run-the-portable-flow.md).
+**Portable flow** — The portable flow is the consumption model in which you write one component. Its step
+operation returns a *`WorkflowAction`*. The SoEx *driver* for each runtime drives the component. The same
+component runs with no change on each runtime. See [Run the portable flow](../how-to/run-the-portable-flow.md).
 
-**Driver** — In the portable model, SoEx's generic per-backend driver that owns the step loop ("the
-\<runtime\> driver"): it dispatches each step through the *governed core*, routes the returned
-`WorkflowAction` onto the backend's durable primitives, and runs the *termination lifecycle* on
-completion. You don't write it; on InProc it is `WorkflowDriver<I>`.
+**Driver** — A driver is the SoEx component that owns the step loop of the portable flow on one runtime
+("the \<runtime\> driver"). It sends each step through the *governed core*. It maps the returned
+`WorkflowAction` to the durable primitives of the runtime. At completion, it runs the *termination
+lifecycle*. SoEx supplies the driver. On InProc, the driver is `WorkflowDriver<I>`.
 
-**`WorkflowAction`** — The value a portable-model step returns, telling the driver what to do next:
-`Complete`, `RaiseIntoNext`, `WaitForEvent`, `Delay`, or `Loop`. The framework envelopes the typed
-payloads, so you pass DTOs, not bytes.
+**`WorkflowAction`** — A `WorkflowAction` is the value that a step of the portable flow returns. It tells
+the driver what to do next: `Complete`, `RaiseIntoNext`, `WaitForEvent`, `Delay`, or `Loop`. The
+framework puts the typed payloads in an envelope. You pass DTOs.
 
-**`EventBranch`** — One way a `WaitForEvent` can be resumed: an event name plus the step a raise of that
-name resumes into. A wait carries one or more, and they race each other and the wait's timer; the first
-branch declared wins if more than one event is already deliverable.
+**`EventBranch`** — An event branch is one way to resume a `WaitForEvent`. It holds an event name and the
+step that a raise of that name resumes. A wait has one or more branches. The branches race each other
+and the timer of the wait. If more than one event is ready for delivery, the branch declared first wins.
 
-**Event data** — What a raiser sends along with an event when the branch already declared what runs next.
-The branch's `OnEvent` step still runs; the data reaches the step operation as a second argument, for that
-one dispatch only. Sealed with `SealEventData`, which is a different seal from the one that supplies a
-step. See [`WorkflowAction`](workflow-action.md#receiving-data-with-an-event).
+**Event data** — Event data is the data that a raiser sends with an event to a branch that declares its
+next step. The `OnEvent` step of the branch runs. The data goes to the step operation as a second
+argument, for that one dispatch only. `SealEventData` seals event data. This seal is different from the
+seal that supplies a step. See [`WorkflowAction`](workflow-action.md#receiving-data-with-an-event).
 
-**No migration** — A native instance and a portable instance have different durable journal/replay
-shapes, so neither driver can replay the other's history. To switch models you start a fresh instance;
-there is no in-place upgrade.
+**No migration** — A native instance and a portable instance write journals of different shapes. Each
+driver can replay only the journal that its own model wrote. To change the model, start a new instance.
+There is no in-place upgrade.
 
 ## The governed core
 
-**Governed core** — The shared `GovernedStep`/`GovernedTermination` machinery both models build on.
-Governance (key mint, subject index, idempotency, termination lifecycle) is identical regardless of model;
-only how the flow is driven differs.
+**Governed core** — The governed core is the shared `GovernedStep`/`GovernedTermination` machinery that
+both models use. Governance is the same in each model: key mint, subject index, idempotency, and
+termination lifecycle. Only the method that drives the flow is different.
 
-**Governed step** — The seam between your flow and your component: one governed dispatch of the step
-component through the SoEx pipeline, with per-step governance applied. Realized by
-`GovernedStep<I>`.
+**Governed step** — A governed step is one governed dispatch of the step component through the SoEx
+pipeline. It connects your flow to your component. It applies the governance for each step.
+`GovernedStep<I>` implements it.
 
-**`GovernedStep<I>`** — Wraps one dispatch of your step component through the SoEx pipeline
-(endpoint pipeline → `DefaultDispatcher` → `component.<op>(typedDto)`), minting the *per-instance key*,
-indexing the *subject*, and (when an *idempotency store* is wired) collapsing at-least-once
-redelivery to a single effect. Returns the component's typed result.
+**`GovernedStep<I>`** — `GovernedStep<I>` sends one dispatch of your step component through the SoEx
+pipeline (endpoint pipeline → `DefaultDispatcher` → `component.<op>(typedDto)`). It mints the
+*per-instance key*. It adds the *subject* to the index. If you configure an *idempotency store*, it
+makes sure that an at-least-once redelivery has one effect only. It returns the typed result of the
+component.
 
-**`GovernedTermination`** — Runs the *termination lifecycle* at the end of a flow: `OnRetaining` → destroy the
-key (*crypto-shred*) → prune the *subject index* → `OnTerminated`, or → `OnRetentionHeld`.
+**`GovernedTermination`** — `GovernedTermination` runs the *termination lifecycle* at the end of a flow:
+`OnRetaining` → destroy the key (*crypto-shred*) → prune the *subject index* → `OnTerminated`, or →
+`OnRetentionHeld`.
 
-**Termination hook** — The small per-backend piece that calls `GovernedTermination` at the end of the flow (a
-base orchestrator, a worker interceptor, a termination activity/handler).
+**Termination hook** — A termination hook is the small part for each runtime that calls
+`GovernedTermination` at the end of the flow. Examples are a base orchestrator, a worker interceptor, and
+a termination activity or handler.
 
-**Step component** — Your plain SoEx component (an IDesign Method-style contract such as `IOnboardSteps`): one
-typed step in, one result out. It does the step's work in-process and holds no flow — branches, waits,
-timers, and sequencing live in the backend (native) or in the driver (portable).
+**Step component** — A step component is your SoEx component that does the work of the steps. It has an
+IDesign Method-style contract, for example `IOnboardManager`. Each operation takes one typed step and
+returns one result. It does the work of the step in process. The runtime (native flow) or the driver
+(portable flow) holds the flow: branches, waits, timers, and the order of the steps.
 
-**Business result** — The typed value a native-model step operation returns (e.g. `StepOutcome`). A
-portable-model step returns a `WorkflowAction` instead.
+**Business result** — A business result is the typed value that a step operation of the native flow
+returns, for example `StepOutcome`. A step of the portable flow returns a `WorkflowAction`.
 
-**Subsystem entrypoint** — The component that fronts a SoEx subsystem — the thing you add governed
-durable-step execution to.
+**Subsystem entrypoint** — A subsystem entrypoint is the component at the front of a SoEx subsystem.
+SoEx.Workflow adds governed durable steps to it.
 
 ## Steps, context, and identity
 
-**Workflow instance** — One running occurrence of a flow, identified by its `InstanceId`. Governance
-(key, subject index entries, idempotency) is scoped per instance.
+**Workflow instance** — A workflow instance is one run of a flow. Its `InstanceId` identifies it. The
+short term is "instance". Governance is for each instance: the key, the subject index entries, and
+idempotency.
 
-**`InstanceId`** — The durable identifier of a workflow instance, supplied by the backend's own context.
+**`InstanceId`** — The `InstanceId` is the durable identifier of a workflow instance. The context of the
+runtime supplies it.
 
-**`Sequence`** — The per-step ordinal within an instance, from the backend's context. With `InstanceId`
-it keys the *idempotency triple*, so a redelivered step applies its effect once.
+**`Sequence`** — The `Sequence` is the ordinal number of a step in an instance. The context of the
+runtime supplies it. With the `InstanceId`, it is part of the *idempotency triple*. A redelivered step
+thus applies its effect one time.
 
-**`StepContext`** — Carries the durable `InstanceId`, the per-step `Sequence`, and the flowed *ambient
-bytes* into `GovernedStep.ExecuteAsync`.
+**`StepContext`** — A `StepContext` holds the durable `InstanceId`, the `Sequence` of the step, and the
+*ambient bytes*. It brings them into `GovernedStep.ExecuteAsync`.
 
-**`StepMetadata`** — The framework-understood facts of a step (`InstanceId`, `Sequence`, `DtoType`,
-`SubjectIds`, `WorkflowManaged`, and the `IdempotencyKey` triple), extracted from the envelope without
-interpreting your payload.
+**`StepMetadata`** — `StepMetadata` holds the facts of a step that the framework uses: `InstanceId`,
+`Sequence`, `DtoType`, `SubjectIds`, `WorkflowManaged`, and the `IdempotencyKey` triple. The framework
+reads them from the envelope. It does not read your payload.
 
-**Ambient / ambient bytes** — The serialized ambient context (built once with
-`WorkflowEnvelope.AmbientFor`) that carries the `SubjectContext`, flowed on each `StepContext` so the
-framework can index subjects and route erasure.
+**Ambient / ambient bytes** — The ambient bytes are the serialized ambient context that holds the
+`SubjectContext`. You build them one time with `WorkflowEnvelope.AmbientFor`. They go with each
+`StepContext`. The framework uses them to index subjects and to route erasure.
 
-**Seed** — The sealed first step an instance starts from (`step.SealStep(instanceId, ...)`). Each step
-seals the next under the *per-instance key*, so the whole journal traces back to the seed and
-crypto-shred renders all of it unrecoverable at once. See
+**Seed** — The seed is the sealed first step from which an instance starts (`step.SealStep(instanceId, ...)`).
+Each step seals the next step with the *per-instance key*. All of the journal thus comes from the seed.
+One crypto-shred makes all of it unrecoverable. See
 [Author a native flow](../how-to/author-a-native-flow.md).
 
-**Workflow binding / `WorkflowBinding<I>`** — An ordinary SoEx binding that hosts your step component;
-you put it in your topology and feed it to the host at process startup. It lives in the
-`SoEx.Transport.Workflow` package (the SoEx transport for the workflow seam), alongside its transport,
-channel, endpoint, and `WorkflowListeners`.
+**Workflow binding / `WorkflowBinding<I>`** — A workflow binding is a usual SoEx binding that hosts your
+step component. Put it in your topology and give it to the host when the process starts. It is in the
+`SoEx.Transport.Workflow` package, which is the SoEx transport for the workflow seam. Its transport,
+channel, endpoint, and `WorkflowListeners` are in the same package.
 
 ## Governance, keys, and subjects
 
-**Subject** — A PII identity (e.g. an email) touched by a workflow, carried in `SubjectContext`.
-Subjects are additive: a step that learns someone new declares them on the action it returns (`.Enrolling(...)`), and the framework indexes them and carries them onto the sealed continuation.
+**Subject** — A subject is a PII identity that a workflow touches, for example an email address.
+`SubjectContext` holds it. You can add subjects during a run. A step that learns a new person declares
+that person on the action that it returns (`.Enrolling(...)`). The framework indexes the subject and
+puts it in the sealed continuation.
 
-**`SubjectContext`** — The PII subject marker attached to ambient bytes. `Managed` means the framework
-indexes and routes erasure for the subject; `External` defers subject handling to the consumer's own
-system.
+**`SubjectContext`** — `SubjectContext` is the PII subject marker in the ambient bytes. With `Managed`,
+the framework indexes the subject and routes erasure for it. With `External`, the system of the consumer
+handles the subject.
 
-**Workflow-managed / externally-managed** — Whether a subject's erasure is handled by SoEx (`Managed`)
-or left to the consumer (`External`).
+**Workflow-managed / externally-managed** — These terms tell who handles the erasure of a subject. SoEx
+handles a workflow-managed subject (`Managed`). The consumer handles an externally-managed subject
+(`External`).
 
-**Per-instance key** — An AES-256-GCM key minted on first use and hard-deleted at termination
-(*crypto-shred*). The portable flow seals everything it journals under it automatically; a native flow
-seals what it persists with it (via `SealStep`). Must live in a durable, shared key store in production.
+**Per-instance key** — The per-instance key is an AES-256-GCM key for one instance. The framework mints
+it on first use and hard-deletes it at termination (*crypto-shred*). The portable flow automatically
+seals all that it journals with this key. A native flow seals the data that it persists with this key,
+through `SealStep`. In production, the key must be in a durable, shared key store.
 
-**Crypto-shred** — Rendering an instance's persisted data unrecoverable by hard-deleting its
-per-instance key, rather than locating and deleting the data itself. Only holds if the persisted bytes
-were sealed under that key (the portable flow does this for you; a native flow must seal what it
-persists) and the key store survives long enough to be the only copy (durable, shared).
+**Crypto-shred** — Crypto-shred makes the persisted data of an instance unrecoverable. It hard-deletes
+the per-instance key. It does not find and delete the data. Crypto-shred has two conditions. First, the
+persisted bytes must be sealed with that key. The portable flow does this for you. A native flow must
+seal the data that it persists. Second, the key store must be durable and shared, so that it keeps the
+only copy of the key.
 
-**`IInstanceKeyStore`** — Mints, holds, encrypts/decrypts with, and hard-deletes per-instance keys.
-`InMemoryInstanceKeyStore` is an AES-256-GCM implementation, in-process only. For production use a bundled
-durable store — `OpenBaoInstanceKeyStore` (OpenBao Transit; the key never leaves the server) or
-`RavenDbInstanceKeyStore` (RavenDB compare-exchange holding a master-key-wrapped data key) — or implement
-`IInstanceKeyStore` against your own DB/KMS/HSM.
+**`IInstanceKeyStore`** — `IInstanceKeyStore` is the key store interface. It mints and holds
+per-instance keys, encrypts and decrypts with them, and hard-deletes them. `InMemoryInstanceKeyStore` is
+an AES-256-GCM implementation for one process only. For production, use a durable store from the
+packages:
 
-**`ISubjectIndex` / subject index** — Maps PII subject ids to instance ids for workflow-managed
-subjects, so erasure can find every instance touching a subject. Pruned at termination.
-`InMemorySubjectIndex` is provided.
+- `OpenBaoInstanceKeyStore` uses OpenBao Transit. The key stays on the server.
+- `RavenDbInstanceKeyStore` uses RavenDB compare-exchange. It holds a data key wrapped by a master key.
 
-**`IIdempotencyStore`** — Optional store that collapses at-least-once step redelivery to a single effect
-on the *idempotency triple*. `InMemoryIdempotencyStore` is provided.
+Alternatively, implement `IInstanceKeyStore` on your own database, KMS, or HSM.
 
-**Idempotency triple / `IdempotencyKey`** — The `(InstanceId, DtoType, Sequence)` key on which a step's
-effect is deduplicated.
+**`ISubjectIndex` / subject index** — The subject index maps PII subject ids to instance ids for
+workflow-managed subjects. Erasure uses it to find each instance that touches a subject. The framework
+prunes it at termination. `InMemorySubjectIndex` is supplied.
+
+**`IIdempotencyStore`** — `IIdempotencyStore` is the idempotency store interface. It is optional. It
+makes sure that an at-least-once step redelivery has one effect only, keyed on the *idempotency triple*.
+`InMemoryIdempotencyStore` is supplied.
+
+**Idempotency triple / `IdempotencyKey`** — The idempotency triple is the `(InstanceId, DtoType, Sequence)`
+key. The framework removes duplicate effects of a step on this key.
 
 ## Erasure
 
-**Termination** — The end of a workflow instance: completion, cancellation, or erasure. Distinct from
-`TerminationCoordinator` (below), which is the erasure-side decision driver.
+**Termination** — Termination is the end of a workflow instance: completion, cancellation, or erasure.
+`TerminationCoordinator` (below) is a different thing. It drives the termination decisions for erasure.
 
-**Termination lifecycle** — What runs at termination: extract must-retain data (`OnRetaining`), crypto-shred
-the key, prune the subject index, then `OnTerminated` (or `OnRetentionHeld` on extraction failure).
+**Termination lifecycle** — The termination lifecycle is the sequence that runs at termination:
 
-**Erasure** — Forgetting a subject's data: extract any must-retain data, then crypto-shred so the rest
-is unrecoverable.
+1. Extract the data that you must keep (`OnRetaining`).
+2. Crypto-shred the key.
+3. Prune the subject index.
+4. Run `OnTerminated`. If the extraction fails, run `OnRetentionHeld`.
 
-**`IErasureEvent`** — The interface a workflow-hosted step component must implement (a deliberate
-opt-in; a no-op is an explicit choice). Its hooks are `OnRetaining`, `OnTerminated`, `OnRetentionHeld`.
+**Erasure** — Erasure removes the data of a subject. It extracts the data that you must keep. Then it
+does a crypto-shred, which makes the other data unrecoverable.
 
-**`OnRetaining`** — Pre-shred extract; fires while the payload is still readable, on every termination path.
-Write must-retain data to a governed store. Must be idempotent on the context's idempotency key.
+**`IErasureEvent`** — `IErasureEvent` is the interface that a step component hosted in a workflow must
+implement. You must choose to implement it. An empty implementation is an explicit choice. Its hooks are
+`OnRetaining`, `OnTerminated`, and `OnRetentionHeld`.
 
-**`OnTerminated`** — Post-termination, post-shred, PII-free bookkeeping (audit, release locks).
+**`OnRetaining`** — `OnRetaining` is the extraction hook that runs before the shred. It fires while the
+payload is still readable, on each termination path. Write the data that you must keep to a governed
+store. It must be idempotent on the idempotency key of the context.
 
-**`OnRetentionHeld` / retention held / quarantine** — Extraction-failure state (non-final): the key
-is retained, auto-retry stopped, and the instance flagged for an audited re-drive. See *Held*.
+**`OnTerminated`** — `OnTerminated` is the hook that runs after termination and after the shred. Use it
+for bookkeeping with no PII, for example an audit or the release of locks.
 
-**Held** — The state an instance is in while quarantined: its `OnRetaining` extraction failed past the
-retry boundary, so its key is retained (not shredded) pending an audited re-drive. The state ("held")
-and the hook that fires on entry (`OnRetentionHeld`) describe the same retention obligation; the
-durable record lives in an `IHeldInstanceRegistry`.
+**`OnRetentionHeld` / retention held / quarantine** — These terms name the state after an extraction
+failure. This state is not final. The key stays, the automatic retry stops, and the instance gets a flag
+for an audited re-drive. See *Held*.
 
-**`ErasureCoordinator`** — Runs a "forget subject S" request end to end: stamps the deadline, fans out
-across the subject index, decides per instance whether to complete naturally or force-terminate, drives
-terminations to crypto-shred (or quarantine), and returns a report.
+**Held** — Held is the state of a quarantined instance. Its `OnRetaining` extraction failed after the
+retry limit. Its key thus stays, and the framework does not shred it, until an audited re-drive. The
+state ("held") and the hook that fires when the instance enters it (`OnRetentionHeld`) are the same
+retention obligation. The durable record is in an `IHeldInstanceRegistry`.
 
-**`TerminationCoordinator`** — The erasure-side decision driver: for one instance it decides and drives
-the termination (complete vs force-terminate, crypto-shred vs quarantine). Distinct from
-`GovernedTermination`, which runs the per-instance *termination lifecycle* at a flow's natural end.
+**`ErasureCoordinator`** — `ErasureCoordinator` runs a "forget subject S" request from start to end:
 
-**`ErasureRequest`** — A request to forget a subject; its `ReceivedAt` anchors the statutory clock.
+1. It stamps the deadline.
+2. It finds each instance of the subject in the subject index.
+3. For each instance, it decides to let it complete naturally or to force-terminate it.
+4. It drives the terminations to crypto-shred or to quarantine.
+5. It returns a report.
 
-**Statutory deadline / `StatutoryDeadlineClock`** — Stamps the legal deadline for an erasure request (a
-null policy → a conservative default window).
+**`TerminationCoordinator`** — `TerminationCoordinator` drives the termination decisions for erasure. For
+one instance, it decides and drives the termination: complete or force-terminate, crypto-shred or
+quarantine. `GovernedTermination` is a different thing. It runs the *termination lifecycle* of one
+instance at the natural end of a flow.
 
-**Request-driven re-drive** — `ErasureCoordinator.EraseAsync` is request-triggered: a "forget subject S"
-request re-drives any still-indexed, un-terminated instance for that subject to crypto-shred, which also
-closes out an instance abandoned before its per-backend termination hook ran (hard worker death at the
-termination instant, admin terminate/purge).
+**`ErasureRequest`** — An erasure request is a request to forget a subject. Its `ReceivedAt` value starts
+the statutory clock.
 
-**Abandoned-instance sweep** — `ErasureCoordinator.SweepAsync(olderThan, resolve)` is the
-request-independent backstop: it enumerates the live (un-shredded) key set via
-`IEnumerableInstanceKeyStore` and force-terminates every instance whose key was minted longer than
-`olderThan` ago, so an abandoned instance whose subject never files an erasure request is still
-crypto-shredded. `olderThan` must exceed the longest legitimate flow duration (it is an age threshold;
-it does not probe liveness). `ErasureSweepLoop` runs it on an interval; the framework performs the
-shred, and the consumer chooses the cadence.
+**Statutory deadline / `StatutoryDeadlineClock`** — `StatutoryDeadlineClock` stamps the legal deadline on
+an erasure request. If the policy is null, it uses a conservative default window.
+
+**Request-driven re-drive** — A request starts `ErasureCoordinator.EraseAsync`. A "forget subject S"
+request re-drives to crypto-shred each instance of that subject that is still indexed and not
+terminated. This also closes an instance that was abandoned before its termination hook ran. Two causes
+are a hard worker death at the time of termination and an admin terminate or purge.
+
+**Abandoned-instance sweep** — `ErasureCoordinator.SweepAsync(olderThan, resolve)` is the backstop that
+needs no request. It lists the live (not shredded) keys through `IEnumerableInstanceKeyStore`. It
+force-terminates each instance whose key is older than `olderThan`. An abandoned instance thus gets a
+crypto-shred, also when its subject never sends an erasure request. `olderThan` must be longer than the
+longest valid flow duration. It is an age limit and does not check if the instance is live.
+`ErasureSweepLoop` runs the sweep at an interval. The framework does the shred. The consumer sets the
+interval.
 
 ## Runtimes and durability
 
-**Runtime / backend** — The durable-execution engine a flow runs on: InProc, Durable Task, Temporal,
-Elsa, Restate, or Camunda 8 / Zeebe.
+**Runtime / backend** — A runtime is the durable execution engine on which a flow runs: InProc, Durable
+Task, Temporal, Elsa, Restate, or Camunda 8 / Zeebe. The docs use the term "runtime". "Backend" occurs
+only in code identifiers and fixed names.
 
-**InProc** — The in-memory runtime (`InMemoryWorkflowRuntime` + `WorkflowDriver<I>`); no durability,
-nothing survives a restart. Always portable (it has no native backend).
+**InProc** — InProc is the in-memory runtime (`InMemoryWorkflowRuntime` + `WorkflowDriver<I>`). It has no
+durability. A restart loses all of its state. It supports the portable flow only, because it has no
+native runtime.
 
-**Durable Task (DTFx / DTS)** — Durable Task Framework / Durable Task Scheduler; durability by
-*event-sourced replay*.
+**Durable Task (DTFx / DTS)** — Durable Task is the Durable Task Framework / Durable Task Scheduler. It
+gets durability through *event-sourced replay*.
 
-**Temporal** — Event-sourced replay runtime; native flows are `[Workflow]` types and the termination runs
-via an interceptor's activity, off the replay path.
+**Temporal** — Temporal is a runtime with event-sourced replay. A native flow on Temporal is a
+`[Workflow]` type. The termination runs through the activity of an interceptor, off the replay path.
 
-**Elsa** — *Checkpoint/resume* runtime (bookmarks, e.g. SQLite).
+**Elsa** — Elsa is a runtime with *checkpoint/resume*. It uses bookmarks, for example in SQLite.
 
-**Restate** — Cross-language runtime with no .NET SDK; the flow runs out-of-process in the *Restate
-sidecar* (`restate-sidecar-rs`), which calls back into .NET over HTTP. See the
+**Restate** — Restate is a cross-language runtime with no .NET SDK. The flow runs out of process in a
+*sidecar*. The portable flow runs in the framework *Restate sidecar* (`restate-sidecar-rs`). The sidecar
+calls back into .NET over HTTP. See the
 [Restate adapter README](../../src/SoEx.Workflow.Runtime.Restate/README.md).
 
-**Camunda 8 / Zeebe** — *Native-only* runtime: the flow is a BPMN graph the broker owns, authored in a
-visual editor. A governed service-task job runs one `GovernedStep`; a process end execution-listener job
-runs the `GovernedTermination` crypto-shred. No portable flow (a `WorkflowAction` loop is not expressed on BPMN).
+**Camunda 8 / Zeebe** — Camunda 8 / Zeebe is a runtime that supports the native flow only. The flow is a
+BPMN graph that the broker owns. You draw it in a visual editor. A governed service-task job runs one
+`GovernedStep`. A process-end execution-listener job runs the `GovernedTermination` crypto-shred. There is
+no portable flow, because BPMN does not express a `WorkflowAction` loop.
 
-**Event-sourced replay** — Durability by replaying a journal of events to rebuild state (DTFx,
-Temporal). Flow code must be deterministic; non-deterministic work — like the key-store mutation at
-termination — must stay off the replay path.
+**Event-sourced replay** — Event-sourced replay is a durability model. The runtime replays a journal of
+events to build the state again (DTFx, Temporal). The flow code must be deterministic. Work that is not
+deterministic must stay off the replay path. An example is the change to the key store at termination.
 
-**Checkpoint/resume** — Durability by persisting state at bookmarks and resuming from them (Elsa).
+**Checkpoint/resume** — Checkpoint/resume is a durability model. The runtime persists the state at
+bookmarks and resumes from them (Elsa).
 
-**Journalled** — Durability by recording each durable step/result in a journal (the Restate sidecar's
-out-of-process run).
+**Journaled** — Journaled is a durability model. The runtime records each durable step and result in a
+journal. The Restate sidecar uses this model when it runs out of process.
 
-**Continue-as-new / `Loop`** — Ending the current execution and starting a fresh one carrying typed
-state across the boundary (the portable `Loop` action).
+**Continue-as-new / `Loop`** — Continue-as-new ends the current execution and starts a new one. Typed
+state goes across the boundary. The portable `Loop` action does continue-as-new.
 
 ## Packaging and testing
 
-**Adapter** — A per-runtime package (`SoEx.Workflow.Runtime.Temporal`, `.DurableTask`, `.Elsa`, `.Restate`,
-`.Zeebe`) that wires the *governed core* onto one backend: a `*WorkflowGateway`, a *driver* (portable)
-and/or a *termination hook* (native), and a `*WorkflowHost` to build the worker.
+**Adapter** — An adapter is the package for one runtime (`SoEx.Workflow.Runtime.Temporal`,
+`.DurableTask`, `.Elsa`, `.Restate`, `.Zeebe`). It connects the *governed core* to that runtime. It
+contains a `*WorkflowGateway`, a *driver* (portable flow), a *termination hook* (native flow), or both,
+and a `*WorkflowHost` that builds the worker.
 
-**Sidecar** — The *Restate sidecar* (`restate-sidecar-rs`): the out-of-process Rust binary that runs the
-Restate orchestration and calls back into the .NET `RestateWorkflowHost` over HTTP, because Restate ships
-no .NET SDK. One binary serves both the portable and native Restate flows.
+**Sidecar** — A sidecar is a Rust binary that runs a Restate flow out of process. It calls back into .NET
+over HTTP. Restate supplies no .NET SDK. The framework sidecar is the *Restate sidecar*
+(`restate-sidecar-rs`). It serves the portable flow (`OnboardWorkflow`), which calls back into
+`RestateWorkflowHost` on `/step` and `/terminate`. It also contains one fixed native onboarding flow
+(`NativeOnboardWorkflow`), which the tests use. You write your own native flow as a Restate service in a
+sidecar that you build. That flow calls back into your own `/gov-step` and `/gov-terminate` host. The
+PiiMaker example has its own sidecar (`examples/PiiMaker/Hosts/Restate/sidecar-rs`).
 
-**Seal** — Serialize a step, wrap it in the workflow envelope, and encrypt the result under the
-*per-instance key*. Broader than raw *encrypt* (`IInstanceKeyStore` does AES-GCM on bytes): sealing is
-the whole serialize-envelope-encrypt operation the *driver* / `SealStep` performs on what gets journaled.
+**Seal** — To seal a step is to serialize it, wrap it in the workflow envelope, and encrypt the result
+with the *per-instance key*. To seal is more than to encrypt. `IInstanceKeyStore` does AES-GCM
+encryption on bytes. Seal is the full serialize, envelope, and encrypt operation. The *driver* or
+`SealStep` does it on the data that goes into the journal.
 
-**Registry / Store / Index** — The suffix rule for durable governance state: a **Store** holds keyed
-lifecycle state on the execution path (`IInstanceKeyStore`, `IIdempotencyStore`); an **Index** is a
-subject↔instance lookup (`ISubjectIndex`); a **Registry** is a maintenance-side set of outstanding
-obligations (`IHeldInstanceRegistry`, `IErasureRequestRegistry`).
+**Registry / Store / Index** — These are the name suffixes for durable governance state:
 
-**Tier-1 / Tier-2** — The test tiers. *Tier-1* is the hermetic set, running with no external backend
-(InProc, plus time-skipping or in-memory adapter fixtures); *Tier-2* exercises the durable backends
-(Temporal, DTS, Restate, Elsa SQLite), is selected by category, and fails when a selected backend is
-unreachable. See the runtime matrix's *Verifying locally*.
+- A **Store** holds keyed lifecycle state on the execution path (`IInstanceKeyStore`, `IIdempotencyStore`).
+- An **Index** is a subject↔instance lookup (`ISubjectIndex`).
+- A **Registry** is a set of open obligations for maintenance (`IHeldInstanceRegistry`,
+  `IErasureRequestRegistry`).
+
+**Tier-1 / Tier-2** — These are the test tiers. *Tier-1* is the hermetic set that a plain run executes.
+It runs with no external runtime: InProc, the Temporal time-skipping environment, and Elsa with its
+in-memory provider. *Tier-2* is the set of deployment-shaped tests. They are opt-in, and you select them
+by category. The category `Tier2Hermetic` selects the Tier-2 tests that need no infrastructure. These
+tests use SQLite files, for example Elsa on SQLite. The other Tier-2 tests need a real runtime or store:
+Temporal, DTS, Restate, Camunda 8 / Zeebe, OpenBao, or RavenDB. A selected test fails when its runtime
+is unreachable. See *Verifying locally* in the runtime matrix.

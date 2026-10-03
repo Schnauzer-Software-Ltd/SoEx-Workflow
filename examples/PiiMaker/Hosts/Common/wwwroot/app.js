@@ -184,6 +184,8 @@ hostSel.addEventListener('change', loadHost);
 // "localhost" would mean the visitor's own machine rather than where the hosts run. Point each option at
 // the hostname the page was loaded from (unchanged when that is localhost).
 for (const opt of hostSel.options) opt.value = opt.value.replace('//localhost:', `//${location.hostname}:`);
+// Start on the host that served this page, when it is one of the listed hosts.
+for (const opt of hostSel.options) if (new URL(opt.value).port === location.port) hostSel.value = opt.value;
 
 // ---- polling: instance shred status + dunning attempts ---------------------------------------
 async function poll() {

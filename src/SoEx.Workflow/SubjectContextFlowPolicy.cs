@@ -3,10 +3,10 @@ using SoEx.Context;
 namespace SoEx.Workflow;
 
 /// <summary>
-/// Flows the well-known <see cref="SubjectContext"/> stop across the dispatch edge in
+/// Flows the well-known <see cref="SubjectContext"/> entry across the dispatch edge in
 /// both directions, so an entrypoint invoked through the pipeline reads the subject as
 /// ambient context (the framework never puts it in a business DTO). Registered in the
-/// workflow host; the only stop the framework flows by default.
+/// workflow host; the only entry the framework flows by default.
 /// </summary>
 public sealed class SubjectContextFlowPolicy : IContextFlowPolicy
 {

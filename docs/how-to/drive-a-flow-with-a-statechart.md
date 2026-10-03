@@ -1,32 +1,49 @@
-# How-to — Drive a flow with a statechart
+> [!IMPORTANT]
+> This file was LLM generated and is pending editing by the project maintainer.
 
-Some flows are easier to draw than to write. If you already model a process as a statechart — in Stately
-Studio, as XState JSON, or as SCXML — you can run that machine as a SoEx workflow instead of translating it
-into step DTOs by hand.
+# How to drive a flow with a statechart
 
-This is not a third consumption model. A statechart runs as an ordinary **step component** behind an ordinary
-contract, so it inherits the whole governed-step seam unchanged: the sealed journal, crypto-shred, the PII
-guards, idempotency and subject enrollment all work exactly as they do for a hand-written component.
+You can run a statechart as a SoEx workflow. The chart can come from Stately Studio, from XState JSON, or
+from SCXML. You do not translate the chart into step DTOs by hand.
+Use a statechart for a flow that is easier to draw than to write.
+
+A statechart runs as a standard **step component** behind a standard contract. It uses the portable flow.
+Thus it gets all of the governed step:
+
+- the sealed journal
+- crypto-shred
+- the PII guards (PII is personally identifiable information)
+- idempotency
+- subject enrollment
+
+Each of these works the same as for a step component that you write by hand.
 
 ## What you need
 
-`SoEx.Workflow.Statecharts`, which wraps [statelyai/xstate-csharp](https://github.com/statelyai/xstate-csharp)
-(add `XState.Scxml` too if you author in SCXML — the adapter takes a machine, not a source format, so it does
-not depend on that package itself).
+- `SoEx.Workflow.Statecharts`. This package wraps
+  [statelyai/xstate-csharp](https://github.com/statelyai/xstate-csharp).
+- `XState.Scxml`, if you write your charts in SCXML. The adapter takes a machine as its input, so it has
+  no dependency on this package.
 
-That library reads XState **v6** JSON and SCXML, and ships no runtime of its own: a transition is a pure
-`(machine, state, event)` to `(state, effects)` function, and the effects are plain data. That is what makes
-this work — the durable half is entirely SoEx's, and the machine never needs a scheduler, a timer service or
-a mailbox.
+The library reads XState **v6** JSON and SCXML. It has no runtime of its own. A transition is a pure
+function from `(machine, state, event)` to `(state, effects)`. The effects are plain data. SoEx supplies
+all of the durable part. The machine uses no scheduler, no timer service, and no mailbox.
 
-**What travels.** The chart does not: it is loaded locally at start and stays there. Only the snapshot crosses
-the wire, on the sealed step DTO, and it is fed back into the chart this node already holds — or into the
-version that wrote it, if the chart has been revised since the instance parked.
+**What travels.** Each node loads the chart locally at start, and the chart stays on that node. Only the
+snapshot goes across the wire, on the sealed step DTO. The node feeds the snapshot back into the chart
+that it holds. If the chart changed after the instance parked, the node feeds the snapshot into the
+version that wrote it.
 
-## 1. Write the manager
+## 1. Write the Manager
 
-The contract is the same shape as any other portable manager's: a step DTO, and the data a raise may carry.
-Nothing in it says "statechart", which is the point — a chart-backed manager is an ordinary workflow manager.
+1. Write the contract of the Manager with a step DTO and the data that a raise can carry.
+
+   This contract has the same shape as the contract of each other portable Manager. It does not refer
+   to the statechart. A Manager with a chart is a standard workflow Manager.
+
+2. Implement `IErasureEvent` on the Manager.
+
+   The composition refuses a workflow-hosted Manager without the erasure contract.
 
 ```csharp
 public interface IExpenseManager
@@ -48,22 +65,23 @@ public sealed class ExpenseManager(StatechartStep process) : IExpenseManager, IE
 }
 ```
 
-The process belongs to the manager, so keep the chart with it rather than with a host, and load it there —
-that is also where the chart's named actions are bound to the component calls behind them. See
-[`examples/Statechart`](../../examples/Statechart/README.md) for the layout.
+3. Keep the chart with the Manager, and load it there.
+
+   The process belongs to the Manager. The Manager is also where you bind the named actions of the chart
+   to the component calls behind them. [`examples/Statechart`](../../examples/Statechart/README.md) shows
+   the layout.
 
 ## 2. Choose a format, and load the chart
 
-Both XState v6 JSON and SCXML work. They are not equivalent, and the difference is about what the chart keeps
-in its own state:
+XState v6 JSON and SCXML both work. They keep the state of the chart in different ways:
 
 | | JSON | SCXML |
 |---|---|---|
-| Chart state across a park | plain data, survives with nothing extra | the datamodel lives in a JavaScript engine, which cannot be journaled |
-| Conditions and assigns | fine | fine, once you say which values to carry |
-| What you write | nothing | two lines naming the values that matter |
+| Chart state across a park | plain data, survives with no extra code | the datamodel is in a JavaScript engine, which the journal cannot hold |
+| Conditions and assigns | supported | supported, after you name the values to carry |
+| What you write | nothing | two lines that name the values to keep |
 
-**JSON is the default.** Its context is plain data, so there is nothing to declare and nothing to get wrong:
+**JSON is the default.** Its context is plain data. Thus you declare nothing:
 
 ```csharp
 StateMachine<JsonElement> machine = MachineConfig.FromJson(
@@ -73,35 +91,49 @@ StateMachine<JsonElement> machine = MachineConfig.FromJson(
         .Guard("isManager", args => roles.IsManager(args.Context)));
 ```
 
-The context is the chart's own `context` JSON, so there is no C# context type to declare.
+The context is the `context` JSON of the chart. You declare no C# context type.
 
-**SCXML** goes through `ScxmlConverter.Parse` in the separate `XState.Scxml` package. Check it first, because a
-chart that keeps values in its datamodel needs a decision:
+**SCXML** loads through `ScxmlConverter.Parse` in the separate `XState.Scxml` package.
+
+1. Check the chart with `ScxmlDurability.RequireDurable` before you parse it.
+
+   A chart that keeps values in its datamodel needs a decision.
 
 ```csharp
 StateMachine<ScxmlDataModel> machine = ScxmlConverter.Parse(ScxmlDurability.RequireDurable(xml));
 ```
 
-`RequireDurable` accepts a chart that routes on event names alone and refuses one that uses `<data>`,
-`<assign>`, `cond`, `<script>` and friends — naming what it found, before a single instance exists, rather than
-letting values vanish at the first wait months later. It is a default, not a verdict: a chart that genuinely
-needs its datamodel can carry it (see below) and simply does not call this. `DatamodelUse(xml)` answers the
-same question without throwing, so you can audit a folder of charts before committing to a format.
+`RequireDurable` accepts a chart that routes on event names only. It refuses a chart that uses `<data>`,
+`<assign>`, `cond`, `<script>`, or related elements. The refusal names what it found. It occurs before
+the first instance exists, so values cannot disappear at the first wait months later.
 
-**A chart is not self-contained.** Its actions and guards are names; the code behind them is supplied at
-import, and a name with no implementation is refused there — every missing one at once, rather than one per
-redeploy. The drawing owns the shape of the flow; your code owns what the boxes do.
+`RequireDurable` is a default check. A chart that needs its datamodel can carry it, as section 3 shows.
+That chart does not call `RequireDurable`. `DatamodelUse(xml)` gives the same answer and does not throw.
+Use it to audit a folder of charts before you choose a format.
 
-**Where the chart comes from is a deployment decision with one hard rule: every worker must load a
-byte-identical chart, and so must a replay.** If two workers disagree about the machine, the flow diverges. An
-embedded resource is the safest default, because it is pinned to the assembly and cannot skew. A file or a
-config store is fine if it is versioned and immutable per deploy — never "latest" from somewhere mutable.
+**The chart and your code are two parts.** The actions and guards of a chart are names. You supply the
+code for them at import. The import refuses each name that has no implementation. It reports all of the
+missing names at one time. The chart sets the shape of the flow. Your code sets what each state does.
 
-Charts are loaded **once, at start**, never per step. A machine is an immutable value with a pure transition
-function, so one instance serves every step of every workflow instance; parsing per step would buy nothing and
-cost real time. The chart never crosses the wire — only the snapshot does.
+> [!CAUTION]
+> Make sure that each worker loads a byte-identical chart. A replay must also load the same chart. If two
+> workers have different machines, the flow diverges.
 
-## 3. Bind it to the flow
+You choose where the chart comes from when you deploy:
+
+- An embedded resource is the safest default. It is pinned to the assembly and cannot skew.
+- A file or a config store is satisfactory if it is versioned and immutable for each deploy.
+- Do not load the "latest" chart from a store that can change.
+
+Load each chart **one time, at start**. Do not load it for each step. A machine is an immutable value with
+a pure transition function. Thus one machine serves each step of each workflow instance. A parse for each
+step gives no benefit and uses real time. The chart never goes across the wire. Only the snapshot does.
+
+## 3. Bind the chart to the flow
+
+1. Create a `StatechartStep` with the machine and a `StatechartOptions`.
+2. Set `ResumableEvents` to the events that a caller can raise.
+3. Set `ContextConverter` to read the context back from JSON.
 
 ```csharp
 var chart = new StatechartStep(machine, new StatechartOptions
@@ -113,7 +145,10 @@ var chart = new StatechartStep(machine, new StatechartOptions
 });
 ```
 
-An SCXML chart needs three more, because its context is a live JavaScript engine rather than data:
+4. For an SCXML chart, also set `ScxmlContextIsNotCarried`, `CaptureContext`, `ApplyContext`, and
+   `ReleaseContext`.
+
+   The context of an SCXML chart is a live JavaScript engine. It is not data.
 
 ```csharp
 var chart = new StatechartStep(machine, new StatechartOptions
@@ -130,20 +165,24 @@ var chart = new StatechartStep(machine, new StatechartOptions
 });
 ```
 
-Those lines live in your code, not the library's, so that a consumer who only ever uses JSON never takes a
-dependency on a JavaScript engine.
+These lines are in your code. Thus a consumer that uses only JSON has no dependency on a JavaScript
+engine.
 
-`ResumableEvents` is declared rather than derived. A snapshot does not enumerate what the machine would
-accept next, and even if it did, every one of these names is journaled in clear as its runtime's delivery
-key — so which names a flow exposes is a decision to make deliberately. Declared order is also the tie-break
-when more than one is deliverable at once.
+You declare `ResumableEvents`. The library does not derive them from the machine. A snapshot does not
+list the events that the machine accepts next. Also, the runtime journals each of these names in clear
+text as its delivery key. Thus you must choose the names that a flow exposes. If more than one event can
+be delivered at the same time, the declared order sets which one wins.
 
-`ContextConverter` is needed whenever the machine's context is not already plain data: the snapshot crosses
-the journal as JSON, so an object slot comes back as a dictionary unless you say how to read it.
+You need `ContextConverter` when the context of the machine is not plain data. The snapshot goes across
+the journal as JSON. Without a converter, an object slot comes back as a dictionary.
 
-## 4. Start it
+## 4. Start the flow
 
-`Seed` produces the first step — the machine's initial snapshot, after its entry actions have run:
+1. Call `chart.Seed` to make the first step.
+
+   The first step is the initial snapshot of the machine, after its entry actions run.
+
+2. Seal the step and start the instance:
 
 ```csharp
 byte[] seed = step.SealStep(instanceId, chart.Seed("order-42"),
@@ -151,26 +190,30 @@ byte[] seed = step.SealStep(instanceId, chart.Seed("order-42"),
 await gateway.StartAsync(instanceId, seed);
 ```
 
-## 5. Move it
+## 5. Move the flow
 
-A caller raises one of the declared events. Because each wait branch seals its own continuation, the branch
-that fires is what tells the next step which event it was — no side-channel:
+1. Raise one of the declared events:
 
 ```csharp
 await gateway.RaiseEventAsync(instanceId, "approve",
     sealer.SealEventData(instanceId, new MachineEventData("\"ana\"")));
 ```
 
-`MachineEventData.Data` is JSON, and by default a JSON primitive reaches the machine as the matching CLR
-value while an object or array arrives as a `JsonElement`. Override `EventDataConverter` to deserialize into
-something the machine's transitions can pattern-match on.
+Each wait branch seals its own continuation. Thus the branch that fires tells the next step which event
+occurred. No other channel is necessary.
+
+`MachineEventData.Data` is JSON. By default, a JSON primitive gets to the machine as the matching CLR
+value. An object or an array gets to the machine as a `JsonElement`.
+
+2. To give the transitions a type that they can pattern-match on, override `EventDataConverter`.
 
 ## Many charts, one step
 
-A chart per flow — its own contract, its own binding — gives each flow its own flow key, and therefore its own
-gateway, sealer and authorization policy. Reach for that when the flows are governed differently.
+You can give each chart its own contract and its own binding. Each flow then has its own flow key. Thus
+each flow has its own gateway, sealer, and authorization policy. Use this design when the flows have
+different governance.
 
-When they are governed alike and there are simply a lot of them, one component can serve them all:
+If many flows have the same governance, one component can serve all of them:
 
 ```csharp
 var router = new StatechartRouter(new Dictionary<string, StatechartStep>
@@ -184,88 +227,109 @@ public Task<WorkflowAction> Run(MachineStep step, MachineEventData? data = null)
     Task.FromResult(router.Advance(step, data));
 ```
 
-The routing key is the machine id the snapshot already carries — a chart names itself in every snapshot it
-writes, so there is nothing to keep in step. Start an instance with `router.Seed("approval")`. A snapshot naming
-a chart the host does not serve is refused and the message lists what is served, so removing a chart from a
-deployment parks its instances loudly instead of routing them somewhere wrong.
+The routing key is the machine id in the snapshot. A chart writes its own name in each snapshot, so you
+keep no separate routing table. Start an instance with `router.Seed("approval")`.
 
-The trade-off is the flow key: one binding means one gateway and one authorization policy for every chart in it.
+The router refuses a snapshot that names a chart that the host does not serve. The error message lists
+the charts that the host serves. Thus, if you remove a chart from a deployment, its instances park with a
+clear error. They do not go to an incorrect chart.
+
+The router has one flow key. One binding gives one gateway and one authorization policy for all of its
+charts.
 
 ## How the machine maps onto a flow
 
 | The machine | The flow |
 |---|---|
-| final state (`done`) | `Complete`, carrying the machine's output **as JSON** |
+| final state (`done`) | `Complete`, with the output of the machine **as JSON** |
 | `error` state | the step throws, so the instance parks with its key retained |
-| active, with declared events | `WaitForEvent`, one branch per declared event |
-| `after(...)` delayed transition | the wait's durable `Timeout`, resuming into `xstate.timer.<id>` |
-| zero-delay self-raise | looped inside the same step, never a durable round-trip |
+| active, with declared events | `WaitForEvent`, one branch for each declared event |
+| `after(...)` delayed transition | the durable `Timeout` of the wait, which resumes into `xstate.timer.<id>` |
+| zero-delay self-raise | loops inside the same step, with no durable round trip |
 | entry/exit actions | run inside the step, under its retry and idempotency |
 
-**The result is JSON.** A chart has no CLR output type — its output is whatever JSON it declared — and an
-untyped value in the result slot is what an allow-listed serializer refuses to write without being told the
-type by name. So a statechart-backed flow completes with its machine's output serialized as JSON, and the
-consumer deserializes it. That holds for a machine built in C# too, so the rule is the same either way.
+**The result is JSON.** A chart has no CLR output type. Its output is the JSON that it declares. An
+allow-listed serializer writes an untyped value in the result slot only when it gets the type by name.
+Thus a flow with a statechart completes with the output of its machine serialized as JSON. The consumer
+deserializes it. The same rule applies to a machine built in C#.
 
-**Timer deadlines.** A snapshot records a timer's *declared delay*, never its deadline. If it did not,
-a flow resumed by an unrelated event while a timer was running would re-arm that timer from full — an SLA
-you could push out forever by nudging it. So the deadline travels on the step DTO, and the durable timer is
-armed with what is left. The arithmetic happens inside the step, off every engine's replay path, and the
-delay it produces is journaled once with the step's action.
+**Timer deadlines.** A snapshot records the *declared delay* of a timer. It does not record the deadline.
+Without the deadline, an unrelated event that resumes the flow re-arms the timer from its full delay. A
+caller can then delay an SLA forever with repeated events. Thus the deadline travels on the step DTO. The
+durable timer arms with the time that remains. The step does this calculation off the replay path of each
+runtime. The runtime journals the result delay one time, with the action of the step.
 
-**Nothing is held between steps.** A `StatechartStep` keeps only what it was composed with — the machine, the
-versions, the options — and never per-instance state, so a node accumulates nothing as instances pass through
-it. What a single step builds, it releases: see `ReleaseContext` above, which matters most for SCXML, where each
-step builds a JavaScript engine that has no reader once the step returns.
+**A `StatechartStep` holds no state between steps.** It keeps only what it was composed with: the machine,
+the versions, and the options. It keeps no per-instance state. Thus a node collects nothing as instances
+go through it. A step releases what it builds. `ReleaseContext` does this. It is most important for
+SCXML, because each step builds a JavaScript engine that has no reader after the step returns.
 
-**A timer with no declared events.** A wait needs at least one branch, so a machine that is waiting only on
-an `after(...)` transition gets a branch named after the timer itself. That name is journaled in clear like
-any other, so a caller who knows it can fire the timer early. Declare a resumable event if you would rather
-the timer were the only thing that can move the flow.
+**A timer with no declared events.** A wait needs at least one branch. A machine that waits only on an
+`after(...)` transition gets a branch with the name of the timer. The runtime journals that name in clear
+text, the same as other branch names. A caller who knows the name can fire the timer early. If you want
+only the timer to move the flow, declare a resumable event.
 
-**What is refused.** Spawning a child, sending to another actor and emitting to subscribers all need an actor
-runtime, and the portable flow deliberately has none. Each throws by name rather than being ignored, because
-a silently dropped effect leaves a flow that looks like it worked. Model those as workflow events instead.
+**Refused effects.** These effects need an actor runtime:
 
-## Changing a chart under live instances
+- spawn a child
+- send to a different actor
+- emit to subscribers
 
-A snapshot is self-describing: it carries the id and version of the chart that wrote it. Register the versions
-that may still appear in storage, and say which one new instances start at:
+The portable flow has no actor runtime by design. Each of these effects throws an error that names it.
+An effect that disappears with no error leaves a flow that seems to work. Use workflow events for these
+effects.
+
+## Change a chart while instances run
+
+A snapshot describes itself: it carries the id and the version of the chart that wrote it.
+
+1. Register each version that can still be in storage.
+2. Set the version at which new instances start:
 
 ```csharp
 var chart = new StatechartStep(MachineVersions.Create(v1, v2), current: "2.0.0", options);
 ```
 
-An instance parked under v1 resumes on v1 and finishes there — pin-and-drain, the same policy the rest of the
-framework takes to a changed flow, rather than being half-migrated mid-run by a build it never knew about. New
-instances start on the current version.
+An instance that parked under v1 resumes on v1 and completes on v1. This policy is pin-and-drain. The
+remainder of the framework uses the same policy for a changed flow. A build that the instance did not
+start on never migrates it in the middle of a run. New instances start on the current version.
 
-Keep a superseded version registered until the instances running it have drained. Drop it too early and those
-instances fail loudly on restore, parking with their keys retained — so re-registering the version recovers
-them, rather than losing them or misreading their state.
+3. Keep a superseded version registered until its instances drain.
 
-## Which runtimes this works on
+If you remove a version too early, its instances fail with a clear error on restore. They park with their
+keys retained. Register the version again to recover them. The framework does not lose these instances
+and does not misread their state.
 
-Every runtime that supports the portable flow, with no adapter change — it is a step component, and the
-runtimes never see the machine. The per-engine realities are the portable flow's own, not the statechart's:
+## Supported runtimes
 
-- **Temporal, Durable Task, InProc** — nothing to know beyond the portable flow's usual behaviour.
-- **Elsa** — portable durable timers need a consumer-driven resumer. Until one is wired, a machine parked on
-  an `after(...)` transition waits indefinitely. Prefer Temporal for a machine that leans on timers.
-- **Restate** — a durable promise is write-once per event name per generation, so a machine that can be
-  resumed twice by the *same* event name in one generation cannot be expressed there.
-- **Camunda 8 / Zeebe** — native BPMN only, no portable flow, so a machine-backed step component is not
-  available. The BPMN graph is the flow on that engine.
+A statechart works on each runtime that supports the portable flow, with no adapter change. It is a step
+component, and the runtimes never see the machine. The behavior on each runtime is the behavior of the
+portable flow on that runtime:
 
-See [the runtime matrix](../reference/runtime-matrix.md) for the full comparison.
+- **Temporal, Durable Task, InProc**: the standard behavior of the portable flow.
+- **Elsa**: portable durable timers need a resumer that the consumer drives. Until you wire one, a machine
+  parked on an `after(...)` transition waits with no limit. For a machine that uses many timers, we
+  recommend that you use Temporal.
+- **Restate**: a durable promise is write-once for each event name in each generation. Restate cannot run
+  a machine that the *same* event name can resume two times in one generation.
+- **Camunda 8 / Zeebe**: supports native BPMN only and has no portable flow. Thus a step component with a
+  machine is not available. The BPMN graph is the flow on that runtime.
+
+[The runtime matrix](../reference/runtime-matrix.md) gives the full comparison.
 
 ## A runnable example
 
-[`examples/Statechart`](../../examples/Statechart/README.md) is all of this end to end and needs no backend:
-an embedded chart, a data-carrying raise, the chart's own timer escalating a flow, and the crypto-shred at
-termination. `dotnet run --project examples/Statechart`.
+[`examples/Statechart`](../../examples/Statechart/README.md) shows all of this from start to end. It needs
+no runtime server. It contains:
+
+- an embedded chart
+- a raise that carries data
+- a timer of the chart that escalates a flow
+- the crypto-shred at termination
+
+Run it with `dotnet run --project examples/Statechart`.
 
 ## See also
 
-- [Write a step component](write-a-step-component.md) — the contract shape this reuses.
-- [`WorkflowAction`](../reference/workflow-action.md) — what the mapping produces, including event data.
+- [Write a step component](write-a-step-component.md) describes the contract shape that a statechart uses.
+- [`WorkflowAction`](../reference/workflow-action.md) describes what the mapping produces, with event data.
