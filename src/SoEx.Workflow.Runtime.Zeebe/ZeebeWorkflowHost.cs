@@ -46,7 +46,7 @@ public static class ZeebeWorkflowHost
     /// and the PII-free instance id are the only payload that crosses this connection, but they cross in clear
     /// along with any gateway credentials — so this is for a loopback/dev gateway. For a gateway reached over a
     /// network use <see cref="ConnectSecure"/> (TLS, optional access token), or build your own
-    /// <see cref="IZeebeClient"/> and pass it to <see cref="DeployAsync"/>/<see cref="OpenStepWorker"/>/
+    /// <see cref="IZeebeClient"/> and pass it to <see cref="DeployAsync"/>/<see cref="O:SoEx.Workflow.Runtime.Zeebe.ZeebeWorkflowHost.OpenStepWorker"/>/
     /// <see cref="OpenTerminationListener"/>, which all accept a pre-built client.
     /// </summary>
     public static IZeebeClient Connect(string gatewayAddress) =>
