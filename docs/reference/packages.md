@@ -28,7 +28,7 @@ supports the native flow only.
 | Package | Contents |
 |---|---|
 | `SoEx.Transport.Workflow` | the SoEx binding and transport that host a step component: `WorkflowBinding<I>`, `WorkflowTransport`, `WorkflowEndpoint<I>`, `WorkflowActivityChannel<I>`, and `WorkflowListeners`. It references `SoEx.Workflow`. |
-| `SoEx.Workflow.Statecharts` | runs a statechart as a step component: `StatechartStep`, `StatechartRouter`, `MachineStep`, `MachineEventData`, `StatechartOptions`, and `ScxmlDurability`. It references `SoEx.Workflow` and the `XState` package. See [Drive a flow with a statechart](../how-to/drive-a-flow-with-a-statechart.md). |
+| `SoEx.Workflow.Statecharts` | runs a statechart as a step component: `StatechartStep`, `StatechartRouter`, `MachineStep`, `MachineEventData`, `StatechartOptions`, `StatechartCall`, `StatechartAction`, `StatechartJson`, `StatechartDurability`, and `ScxmlDurability`. It references `SoEx.Workflow` and the `XState` package. See [Drive a flow with a statechart](../how-to/drive-a-flow-with-a-statechart.md) and [Reference: statecharts](statecharts.md). |
 
 ## Abstractions
 

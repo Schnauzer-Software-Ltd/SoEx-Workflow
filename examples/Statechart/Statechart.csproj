@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="SoEx.Hosting" />
+    <PackageReference Include="SoEx.Transport.InProc" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 

@@ -35,8 +35,24 @@ public sealed class StatechartOptions
     /// Effects run inside the governed step, so whatever they touch is covered by the step's retry and
     /// idempotency — make them idempotent, because a redelivered step re-runs them.
     /// </para>
+    /// <para>
+    /// A wrapper must call <c>Exec</c> before it returns. An action registered through
+    /// <see cref="StatechartAction"/> hands its asynchronous work to the step from inside <c>Exec</c>, and the
+    /// step awaits that work when this delegate returns.
+    /// </para>
     /// </summary>
     public Action<ActionEffect> RunAction { get; init; } = effect => effect.Exec();
+
+    /// <summary>
+    /// The most transitions one step may take before the machine waits. Default 1000.
+    /// <para>
+    /// A step runs the machine until it waits: every call result and every immediate raise is another
+    /// transition inside the same step. A chart whose calls lead back into each other with no wait between
+    /// them would never park, and would hold its step open until the runtime timed it out. This bound turns that
+    /// into an error that names the cause. Raise it for a chart that does a long chain of calls by design.
+    /// </para>
+    /// </summary>
+    public int MaxTransitionsPerStep { get; init; } = 1000;
 
     /// <summary>
     /// Turns the machine context as the snapshot's deserializer produced it back into the machine's own
@@ -70,6 +86,19 @@ public sealed class StatechartOptions
     /// </para>
     /// </summary>
     public Func<string, object?> EventDataConverter { get; init; } = Primitive;
+
+    /// <summary>
+    /// Turns the JSON of a seed's input back into the value the machine starts with. The seed carries the
+    /// input as JSON because the machine starts in the first governed step, after the seed has crossed the
+    /// journal.
+    /// <para>
+    /// The default is the same as <see cref="EventDataConverter"/>'s: a JSON primitive becomes the matching
+    /// CLR value, and an object or array stays a <see cref="JsonElement"/>. That suits a chart imported from
+    /// JSON, whose context is JSON. A machine built in C# whose context factory expects a CLR type needs this
+    /// set, for example <c>json =&gt; JsonSerializer.Deserialize&lt;OrderInput&gt;(json)</c>.
+    /// </para>
+    /// </summary>
+    public Func<string, object?> InputConverter { get; init; } = Primitive;
 
     private static object? Primitive(string json)
     {

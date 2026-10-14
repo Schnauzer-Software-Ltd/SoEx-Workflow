@@ -66,6 +66,8 @@ These pages give the exact signatures, the packages, and the behavior of each ru
 - [The governed core](reference/governed-core.md). `GovernedStep`, `GovernedTermination`,
   `StepContext`, and the wiring.
 - [`WorkflowAction`](reference/workflow-action.md). The vocabulary of the portable flow.
+- [Statecharts](reference/statecharts.md). `StatechartStep`, calls, asynchronous actions, the options,
+  and how a machine maps onto a flow.
 - [Erasure events](reference/erasure-events.md). `IErasureEvent` and its context types.
 - [Erasure API](reference/erasure-api.md). `ErasureCoordinator`, the sweep, and maintenance.
 - [Governance services](reference/governance-services.md). The key store, the subject index, and the

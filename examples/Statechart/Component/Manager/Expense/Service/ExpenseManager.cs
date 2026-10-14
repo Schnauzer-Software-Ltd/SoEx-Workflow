@@ -1,5 +1,7 @@
 using SoEx.Workflow;
 using SoEx.Workflow.Statecharts;
+using StatechartDemo.Access.Notification.Interface;
+using StatechartDemo.Engine.Budget.Interface;
 using StatechartDemo.Manager.Expense.Interface;
 
 namespace StatechartDemo.Manager.Expense.Service;
@@ -15,10 +17,12 @@ namespace StatechartDemo.Manager.Expense.Service;
 /// A manager that DID hold data elsewhere would extract it in <c>OnRetaining</c>, while the key is still live.
 /// </para>
 /// </summary>
-public sealed class ExpenseManager(StatechartStep process) : IExpenseManager, IErasureEvent
+public sealed class ExpenseManager(StatechartStep process, IBudgetEngine budget, INotificationAccess notifications)
+    : IExpenseManager, IErasureEvent
 {
     public Task<WorkflowAction> Approve(MachineStep step, MachineEventData? data = null) =>
-        Task.FromResult(process.Advance(step, data));
+        // The components this call was given go to the step, which hands them to the chart's calls and actions.
+        process.AdvanceAsync(step, data, new ExpenseComponents(budget, notifications));
 
     /// <summary>Pre-shred extract; fires while the journal is still readable, on every termination path.</summary>
     public Task OnRetaining(RetainingContext context) => Task.CompletedTask;

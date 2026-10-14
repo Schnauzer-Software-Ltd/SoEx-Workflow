@@ -7,12 +7,15 @@ using SoEx.Abstractions;
 using SoEx.Context;
 using SoEx.Hosting;
 using SoEx.Hosting.Default;
+using SoEx.Transport.InProc;
 using SoEx.Transport.Workflow;
 using SoEx.Workflow;
 using SoEx.Workflow.Runtime.InMemory;
 using SoEx.Workflow.Statecharts;
 using StatechartDemo.Access.Notification.Interface;
 using StatechartDemo.Access.Notification.Service;
+using StatechartDemo.Engine.Budget.Interface;
+using StatechartDemo.Engine.Budget.Service;
 using StatechartDemo.Manager.Expense.Interface;
 using StatechartDemo.Manager.Expense.Service;
 
@@ -33,12 +36,10 @@ public static class Program
     public static async Task Main()
     {
         // ---- the business component, and the process it owns ------------------------------------------
-        // Loaded once, at start. The chart never crosses the wire; only a claim's snapshot does.
-        //
-        // The components its actions call are supplied as a factory, not as instances: a SoEx component is
-        // resolved per call and holds nothing between them. A real host resolves from the component's own
-        // scope here; this one news it up, which amounts to the same thing for a component with no state.
-        StatechartStep process = ExpenseApprovalChart.Load(() => new NotificationAccess());
+        // Loaded once, at start. The chart never crosses the wire; only a claim's snapshot does. It holds no
+        // component: SoEx resolves the manager and the components it depends on per call, and the manager
+        // hands them to the process on each step.
+        StatechartStep process = ExpenseApprovalChart.Load();
         Console.WriteLine($"process  {ExpenseApprovalChart.ProcessId}  (embedded with the manager, loaded once)");
 
         // ---- the governed step: SoEx hosts the manager, governance wraps it --------------------------
@@ -48,11 +49,26 @@ public static class Program
 
         IServiceCollection managerServices = new ServiceCollection()
             .AddSingleton(listeners)
-            // The process is a singleton because a machine is an immutable value. The manager that uses it is
-            // still constructed per call, which is the only thing holding state would be wrong about.
+            // The process is a singleton because a machine is an immutable value. The manager that uses it, and
+            // the components the manager depends on, are constructed per call.
             .AddSingleton(process)
-            .AddTransient<INotificationAccess, NotificationAccess>()
             .AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
+
+        // The engine and the access are components of their own. The manager reaches each one through a proxy,
+        // and SoEx resolves them per call.
+        IServiceCollection budgetServices = new ServiceCollection().AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
+        IServiceCollection notificationServices = new ServiceCollection().AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
+
+        static SoEx.Topology.Host Component<TContract, TImpl>(IServiceCollection services) => new()
+        {
+            Implementation = typeof(TImpl),
+            Endpoints = [new InProcBinding<TContract>(SubSystem)],
+            Proxies = [],
+            ServiceCollection = services,
+        };
+
+        static SoEx.Topology.Client Proxy<T>() where T : class =>
+            new SoEx.Topology.Client<T> { SubSystem = SubSystem, Service = new InProcBinding<T>(SubSystem) };
 
         var topology = new SoEx.Topology.System
         {
@@ -63,12 +79,16 @@ public static class Program
                 new SoEx.Topology.SubSystem
                 {
                     Name = SubSystem,
-                    Components = [],
+                    Components =
+                    [
+                        Component<IBudgetEngine, BudgetEngine>(budgetServices),
+                        Component<INotificationAccess, NotificationAccess>(notificationServices),
+                    ],
                     EntryPoint = new SoEx.Topology.Host
                     {
                         Implementation = typeof(ExpenseManager),
                         Endpoints = [new WorkflowBinding<IExpenseManager>(SubSystem)],
-                        Proxies = [],
+                        Proxies = [Proxy<IBudgetEngine>(), Proxy<INotificationAccess>()],
                         ServiceCollection = managerServices,
                     },
                 },
@@ -77,6 +97,10 @@ public static class Program
 
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
+
+        // One in-proc listener registry shared by the manager and every component, so each proxy reaches its
+        // component through the in-proc transport.
+        InProcExtensions.InProcClientWithSpan(builder.Services, managerServices, budgetServices, notificationServices);
         // The stock pipeline serializes with System.Text.Json, which binds values to their declared types. The
         // ambient SubjectContext entry and the steps the portable flow carries in WorkflowAction are declared `object`,
         // so the serializer is told about them here.
@@ -93,32 +117,39 @@ public static class Program
         var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
         var step = new GovernedStep<IExpenseManager>(endpoint, serializer, idempotency: null, keys, index);
-        var termination = new GovernedTermination(new ExpenseManager(process), keys, index);
+        // The termination calls only the manager's erasure hooks, which use none of its components.
+        var termination = new GovernedTermination(
+            new ExpenseManager(process, new BudgetEngine(), new NotificationAccess()), keys, index);
 
-        // ---- two claims ------------------------------------------------------------------------------
+        // ---- four claims ------------------------------------------------------------------------------
 
-        await RunClaim("approved by a manager who is named in the raise", approveAfterEscalation: false);
-        await RunClaim("nobody approves, the process escalates itself, then approved", approveAfterEscalation: true);
+        await RunClaim("a small claim: the budget review approves it, and nobody is asked", 80m, approver: null);
+        await RunClaim("approved by a manager who is named in the raise", 450m, approver: "ana");
+        await RunClaim("nobody approves, the process escalates itself, then approved", 450m, approver: "the duty manager",
+            escalateFirst: true);
+        await RunClaim("over budget: the budget review rejects it, and nobody is asked", 5000m, approver: null);
 
-        async Task RunClaim(string label, bool approveAfterEscalation)
+        async Task RunClaim(string label, decimal amount, string? approver, bool escalateFirst = false)
         {
             string claimId = "claim-" + Guid.NewGuid().ToString("N")[..8];
 
             // The claimant is the subject: it rides the ambient, sealed with every step. The instance id is
             // journaled in clear on every engine, so it stays PII-free.
             // The chart's context IS its JSON, so the claim starts as a JSON document rather than a CLR object.
-            byte[] seed = step.SealStep(claimId, process.Seed(JsonSerializer.SerializeToElement(new { claimId })),
+            // The seed runs nothing: the budget review is the process's first work, and it runs in the first
+            // governed step, under the step's seal and retry.
+            byte[] seed = step.SealStep(claimId, process.Seed(JsonSerializer.SerializeToElement(new { claimId, amount })),
                 WorkflowEnvelope.AmbientFor(serializer, SubjectContext.Managed("ana@example.com")));
+
+            Console.WriteLine($"\n── {label}");
+            Console.WriteLine($"   {claimId}   amount {amount}   key live? {keys.Has(claimId)}");
 
             var runtime = new InMemoryWorkflowRuntime(claimId);
             Task<byte[]> claim = new WorkflowDriver<IExpenseManager>(runtime, step, termination).RunAsync(seed);
 
-            Console.WriteLine($"\n── {label}");
-            Console.WriteLine($"   {claimId}   key live? {keys.Has(claimId)}");
+            await Task.Delay(200);   // let the claim reach its parked wait, or finish
 
-            await Task.Delay(200);   // let the claim reach its parked wait
-
-            if (approveAfterEscalation)
+            if (escalateFirst)
             {
                 // Nobody approves in time, so the process escalates on its own — the chart's own delayed
                 // transition, routed onto the runtime's durable timer. InProc's timer is virtual, which is what
@@ -127,11 +158,13 @@ public static class Program
                 await Task.Delay(200);
             }
 
-            // Who approved is knowable only to the approver, so it travels with the event rather than as a step
-            // the caller would have to author.
-            await runtime.RaiseEventAsync(claimId, "approve",
-                step.SealEventData(claimId, new MachineEventData(
-                    approveAfterEscalation ? "\"the duty manager\"" : "\"ana\"")));
+            if (approver is not null)
+            {
+                // Who approved is knowable only to the approver, so it travels with the event rather than as a
+                // step the caller would have to author.
+                await runtime.RaiseEventAsync(claimId, "approve",
+                    step.SealEventData(claimId, new MachineEventData(JsonSerializer.Serialize(approver))));
+            }
 
             byte[] result = await claim;
 

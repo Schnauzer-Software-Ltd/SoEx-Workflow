@@ -1,9 +1,20 @@
 {
   "id": "expense-approval",
-  "version": "1.0.0",
-  "initial": "submitted",
-  "context": { "claimId": null },
+  "version": "1.1.0",
+  "initial": "reviewing",
+  "context": { "claimId": null, "amount": 0 },
   "states": {
+    "reviewing": {
+      "invoke": {
+        "id": "budget",
+        "src": "reviewBudget",
+        "onDone": [
+          { "guard": "overBudget", "target": "rejected", "actions": "notifyRejected" },
+          { "guard": "withinLimit", "target": "approved", "actions": "notifyApproved" },
+          { "target": "submitted" }
+        ]
+      }
+    },
     "submitted": {
       "on": {
         "approve": { "target": "approved", "actions": "notifyApproved" },

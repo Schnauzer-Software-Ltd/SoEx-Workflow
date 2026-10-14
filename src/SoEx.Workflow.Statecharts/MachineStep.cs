@@ -15,7 +15,7 @@ namespace SoEx.Workflow.Statecharts;
 /// </summary>
 /// <param name="Snapshot">
 /// The machine snapshot, serialized with the library's snapshot options. Self-describing: it carries the
-/// machine id and version that wrote it, which is what lets the library migrate an old one forward.
+/// machine id and version that wrote it, so a step resumes on the version that wrote its snapshot.
 /// </param>
 /// <param name="EventName">
 /// The event this step feeds the machine. Every branch of a wait seals its own continuation, so the branch
@@ -44,6 +44,15 @@ public sealed record MachineStep(
     /// </para>
     /// </summary>
     public string? ContextData { get; init; } = ContextData;
+
+    /// <summary>
+    /// Set on a seed step only: the machine's start input, as JSON (<c>null</c> when there is none). A step
+    /// that carries it starts the machine; every later step resumes a snapshot and leaves it null.
+    /// <para>
+    /// On a seed step, <see cref="Snapshot"/> carries only the identity of the machine version to start.
+    /// </para>
+    /// </summary>
+    public string? Start { get; init; }
 
     /// <summary>Pending timer deadlines (UTC ticks) by timer id; empty rather than null, so the journaled
     /// shape is the same whether or not the machine had timers running.</summary>

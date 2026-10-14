@@ -40,6 +40,18 @@ public sealed class StatechartRouter
             throw new ArgumentException("a router needs at least one chart", nameof(charts));
         }
 
+        // The key is what Seed looks a chart up by, and the machine id is what every later step is routed by, so
+        // the two must agree. A mismatch would seed fine and then refuse every step after it.
+        foreach ((string key, StatechartStep chart) in charts)
+        {
+            if (!string.Equals(key, chart.MachineId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"the chart registered as '{key}' has the machine id '{chart.MachineId}'. Register each chart " +
+                    "under its machine id: the 'id' at the top of the chart.", nameof(charts));
+            }
+        }
+
         _charts = charts;
     }
 
@@ -54,10 +66,14 @@ public sealed class StatechartRouter
     /// snapshot naming a chart this component does not serve is refused rather than guessed at.
     /// </para>
     /// </summary>
-    public WorkflowAction Advance(MachineStep step, MachineEventData? data = null)
+    public Task<WorkflowAction> AdvanceAsync(
+        MachineStep step,
+        MachineEventData? data = null,
+        object? services = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(step);
-        return Chart(MachineIdOf(step)).Advance(step, data);
+        return Chart(MachineIdOf(step)).AdvanceAsync(step, data, services: services, cancellationToken: cancellationToken);
     }
 
     /// <summary>The machine id a step's snapshot names — which chart it belongs to.</summary>

@@ -27,6 +27,15 @@ public sealed class StatechartStep
     private readonly MachineVersions? _versions;
     private readonly StatechartOptions _options;
 
+    // For each machine version: whether each invoke id has onError transitions. Read when a call fails, so a
+    // business failure with no error branch is reported by name. Null for an id that two invokes share with
+    // different answers.
+    private readonly Dictionary<IMachineLogic, IReadOnlyDictionary<string, bool?>> _onError =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The id of the machine this step runs, which is also the id every snapshot of it names.</summary>
+    internal string MachineId => _machine.Id;
+
     /// <summary>
     /// Binds one machine. Enough for a chart that has never been revised under live instances — every
     /// snapshot in flight was written by this exact version.
@@ -34,8 +43,9 @@ public sealed class StatechartStep
     public StatechartStep(IMachineLogic machine, StatechartOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(machine);
-        _machine = machine;
+        _machine = StatechartDurability.Require(machine);
         _options = options ?? new StatechartOptions();
+        _onError[machine] = StatechartDurability.OnErrorByInvoke(machine);
     }
 
     /// <summary>
@@ -59,7 +69,7 @@ public sealed class StatechartStep
     {
         ArgumentNullException.ThrowIfNull(versions);
         ArgumentException.ThrowIfNullOrEmpty(current);
-        _versions = versions;
+        _versions = StatechartDurability.Require(versions);
         _options = options ?? new StatechartOptions();
 
         // Resolve the starting machine through the registry itself rather than taking a second reference to
@@ -70,36 +80,66 @@ public sealed class StatechartStep
             Value = "",
             Machine = new PersistedMachineIdentity(versions.MachineId, current),
         }).Machine;
+
+        foreach (string version in versions.Versions)
+        {
+            if (versions.Get(version) is { } registered)
+            {
+                _onError[registered] = StatechartDurability.OnErrorByInvoke(registered);
+            }
+        }
     }
     private readonly JsonSerializerOptions _snapshotJson = SnapshotJson.DefaultOptions();
 
     private static readonly IReadOnlyDictionary<string, long> Empty =
         new Dictionary<string, long>(StringComparer.Ordinal);
 
-    /// <summary>Seals the seed step for a new instance: the machine's initial snapshot, before any event.</summary>
-    public MachineStep Seed(object? input = null)
-    {
-        (ISnapshot state, IReadOnlyList<Effect> effects) = _machine.GetInitialSnapshot(input);
+    /// <summary>
+    /// Builds the seed step for a new instance. It names the machine version that starts and carries
+    /// <paramref name="input"/> as JSON. It runs nothing.
+    /// <para>
+    /// The machine starts in the first governed step. Its initial entry actions and calls therefore run under
+    /// the step's seal, retry and idempotency, the same as all of its later work. A seed that ran them here
+    /// would run them in whatever code starts the instance, where a failure has nothing to retry it.
+    /// </para>
+    /// <para>
+    /// The input goes through JSON, and <see cref="StatechartOptions.InputConverter"/> reads it back before the
+    /// machine sees it.
+    /// </para>
+    /// </summary>
+    public MachineStep Seed(object? input = null) =>
+        new(JsonSerializer.Serialize(Identity(_machine), _snapshotJson))
+        {
+            Start = JsonSerializer.Serialize(input, _snapshotJson),
+        };
 
-        try
-        {
-            // The initial transition can already have produced effects (entry actions, an immediately-done
-            // machine). Running them here rather than on the first step keeps the seed honest: what is sealed
-            // is the machine AFTER its entry work, which is what the first dispatch would otherwise have to redo.
-            RunEffects(effects);
-            return Persist(_machine, state, Empty);
-        }
-        finally
-        {
-            Release(_machine, state);
-        }
-    }
+    // A snapshot that carries only which machine, and which version of it, the instance starts on. The version
+    // is fixed here, at seed time, so a deploy between the seed and the first step does not change it.
+    private static PersistedSnapshot Identity(IMachineLogic machine) => new()
+    {
+        Status = "active",
+        Value = "",
+        Machine = new PersistedMachineIdentity(machine.Id, machine.Version),
+    };
 
     /// <summary>
     /// Advances the machine by one event and returns the flow's next action.
     /// <paramref name="data"/> is the payload a raise carried, and is null for a bare raise or a timer.
+    /// <para>
+    /// The machine runs until it waits or finishes. The calls it invokes on the way run here, and their
+    /// results move it on inside this step. A retry of the step runs all of that work again.
+    /// </para>
+    /// <para>
+    /// <paramref name="services"/> is handed to every call and action registered with a services type, for
+    /// example the components the Manager received for this call. A SoEx component is resolved per call, so
+    /// the Manager passes the ones it was given rather than the chart capturing any at load.
+    /// </para>
     /// </summary>
-    public WorkflowAction Advance(MachineStep step, MachineEventData? data = null)
+    public async Task<WorkflowAction> AdvanceAsync(
+        MachineStep step,
+        MachineEventData? data = null,
+        object? services = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(step);
 
@@ -110,6 +150,12 @@ public sealed class StatechartStep
         // snapshot carries. An unregistered version throws here, which parks the instance with its key
         // retained, so re-registering that version recovers it rather than losing it.
         IMachineLogic machine = _versions is null ? _machine : _versions.ParseSnapshot(snapshot).Machine;
+
+        if (step.Start is { } start)
+        {
+            return await StartAsync(new Run(machine, services), _options.InputConverter(start), cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         IRestoreResult restored = machine.Restore(snapshot, contextConverter: _options.ContextConverter);
         ISnapshot state = restored.State;
@@ -125,18 +171,20 @@ public sealed class StatechartStep
                 (ContextOf(machine, state), captured);
         }
 
+        var run = new Run(machine, services);
         try
         {
             if (step.EventName.Length > 0)
             {
-                state = Step(machine, state, EventFor(step.EventName, data));
+                state = await RunAsync(run, state, [], cause: null, EventFor(step.EventName, data), cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             // Persisted by the machine that produced the state, which on a resume is the version that WROTE
             // the snapshot rather than the version new instances start at. An instance therefore finishes on
             // the chart it started on — pin-and-drain, the same policy the rest of the framework takes to a
             // changed flow — instead of being half-migrated mid-run by a build it never knew about.
-            return Route(machine, state, step.Deadlines);
+            return Route(run, state, step.Deadlines);
         }
         finally
         {
@@ -147,76 +195,206 @@ public sealed class StatechartStep
         }
     }
 
-    // One macrostep, plus any internal raises it produced. A RaiseEffect with no delay is the machine
-    // talking to itself, so it is looped here rather than turned into a durable round-trip: it is not a
-    // business event, nothing outside could deliver it, and journaling one would put the machine's private
-    // bookkeeping into the flow's history.
-    private ISnapshot Step(IMachineLogic machine, ISnapshot state, MachineEvent evt)
+    // The first step of an instance: the initial transition, its effects, and everything they lead to.
+    private async Task<WorkflowAction> StartAsync(Run run, object? input, CancellationToken ct)
+    {
+        (ISnapshot state, IReadOnlyList<Effect> effects) = run.Machine.GetInitialSnapshot(input);
+        try
+        {
+            state = await RunAsync(run, state, effects, new InitEvent(input), first: null, ct).ConfigureAwait(false);
+            return Route(run, state, Empty);
+        }
+        finally
+        {
+            Release(run.Machine, state);
+        }
+    }
+
+    // What one step accumulates while the machine runs: which machine, what the Manager handed in, and which
+    // timers the machine (re)started. A timer keeps its id when its state is re-entered, so the id alone cannot
+    // tell a fresh timer from the one that just fired.
+    private sealed class Run(IMachineLogic machine, object? services)
+    {
+        public IMachineLogic Machine { get; } = machine;
+        public object? Services { get; } = services;
+        public HashSet<string> StartedTimers { get; } = new(StringComparer.Ordinal);
+    }
+
+    // Runs the machine until it waits: one macrostep for the event the step was given, then one for each
+    // event the machine's own work produces. Two kinds of work produce events here. A call's result is fed
+    // back as the completion of its invoke, so the chart's onDone and onError guards decide on what the call
+    // answered. A zero-delay raise is the machine talking to itself. Both loop inside this step rather than
+    // becoming a durable round-trip: neither is a business event, nothing outside could deliver one, and
+    // journaling them would put the machine's private bookkeeping into the flow's history.
+    //
+    // `effects` are the effects of a transition that has already run (the initial one, when the machine starts), and
+    // `cause` is the event that produced them. `first` is the event to feed, if there is one.
+    private async Task<ISnapshot> RunAsync(
+        Run run,
+        ISnapshot state,
+        IReadOnlyList<Effect> effects,
+        MachineEvent? cause,
+        MachineEvent? first,
+        CancellationToken ct)
     {
         var pending = new Queue<MachineEvent>();
-        pending.Enqueue(evt);
+        var calls = new Dictionary<string, SpawnEffect>(StringComparer.Ordinal);
 
-        while (pending.Count > 0)
+        if (cause is not null)
         {
-            (ISnapshot next, IReadOnlyList<Effect> effects) = machine.Transition(state, pending.Dequeue());
-            state = next;
+            await RunEffectsAsync(run, state, effects, cause, pending, calls, ct).ConfigureAwait(false);
+        }
 
-            foreach (MachineEvent raised in RunEffects(effects))
+        if (first is not null)
+        {
+            pending.Enqueue(first);
+        }
+
+        int transitions = 0;
+        while (pending.TryDequeue(out MachineEvent? evt))
+        {
+            if (++transitions > _options.MaxTransitionsPerStep)
             {
-                pending.Enqueue(raised);
+                throw new InvalidOperationException(
+                    $"the machine took more than {_options.MaxTransitionsPerStep} transitions in one step without " +
+                    "waiting. A chart whose calls or raises lead back into each other with no wait between them " +
+                    $"never parks. Add a wait or a delay to the loop, or raise {nameof(StatechartOptions)}." +
+                    $"{nameof(StatechartOptions.MaxTransitionsPerStep)} if the chain is long by design.");
             }
+
+            (ISnapshot next, IReadOnlyList<Effect> produced) = run.Machine.Transition(state, evt);
+            state = next;
+            await RunEffectsAsync(run, state, produced, evt, pending, calls, ct).ConfigureAwait(false);
+        }
+
+        // Every call the machine spawned has started and completed, or was stopped before it started. A call
+        // still here would be a child the snapshot cannot hold.
+        if (calls.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"the machine spawned the call(s) {string.Join(", ", calls.Keys)} and never started them");
         }
 
         return state;
     }
 
-    // Runs the effects of one transition and returns the internal raises to feed back in. Anything the
-    // portable model has no home for is refused by name rather than ignored: a machine that spawns a child,
-    // sends to another actor or emits to a subscriber is relying on a runtime this deliberately does not
-    // have, and silently dropping that would leave a flow that looks like it worked.
-    private List<MachineEvent> RunEffects(IReadOnlyList<Effect> effects)
+    // Runs the effects of one transition in order. Raises and call results go onto `pending`, behind every
+    // effect of this transition, which is the order XState itself gives them. Anything the portable model
+    // has no home for is refused by name rather than ignored: a machine that spawns a child machine, sends
+    // to another actor or emits to a subscriber is relying on a runtime this deliberately does not have, and
+    // silently dropping that would leave a flow that looks like it worked.
+    private async Task RunEffectsAsync(
+        Run run,
+        ISnapshot state,
+        IReadOnlyList<Effect> effects,
+        MachineEvent cause,
+        Queue<MachineEvent> pending,
+        Dictionary<string, SpawnEffect> calls,
+        CancellationToken ct)
     {
-        List<MachineEvent> raised = [];
-
         foreach (Effect effect in effects)
         {
             switch (effect)
             {
                 case ActionEffect action:
-                    _options.RunAction(action);
+                    // A synchronous action has done its work when RunAction returns. An asynchronous one
+                    // (StatechartAction) has handed its work back, and is awaited here, before the next effect.
+                    foreach (Func<CancellationToken, Task> work in
+                             StatechartAction.Collect(_options.RunAction, action, run.Services))
+                    {
+                        await work(ct).ConfigureAwait(false);
+                    }
+
                     break;
 
                 case RaiseEffect { Delay.Ticks: 0 } raise:
-                    raised.Add(raise.Event);
+                    pending.Enqueue(raise.Event);
                     break;
 
-                case RaiseEffect:
-                    // A DELAYED self-raise is how the machine starts a timer — an `after` transition. It
-                    // needs no work here: starting it already put it on the snapshot's timer ledger, which
-                    // is what Route reads to arm the durable timer. Running it as an effect would be the
-                    // mistake, because the delay belongs to the engine, not to this step.
+                case RaiseEffect delayed:
+                    // A DELAYED self-raise is how the machine starts a timer — an `after` transition. Starting
+                    // it already put it on the snapshot's timer ledger, which is what Route reads to arm the
+                    // durable timer. What this step must remember is THAT it started: a state that re-enters
+                    // starts its timer again under the same id, and that timer needs a fresh deadline.
+                    if (delayed.Id is { } timerId)
+                    {
+                        run.StartedTimers.Add(timerId);
+                    }
+
                     break;
+
+                case SpawnEffect { Logic: StatechartCall } spawn:
+                    // Spawned now, started at the end of the macrostep. A state entered and left inside one
+                    // macrostep is stopped before that, and its call never runs.
+                    calls[spawn.Id] = spawn;
+                    break;
+
+                case StopChildEffect stop:
+                    calls.Remove(stop.ChildId);
+                    break;
+
+                case StartEffect start when calls.Remove(start.Id, out SpawnEffect? spawn):
+                    pending.Enqueue(await CallAsync(run, state, spawn, cause, ct).ConfigureAwait(false));
+                    break;
+
+                case DeadLetterEffect { Event: DoneActorEvent or ErrorActorEvent } refused:
+                    // The step fed this completion itself, so a refusal is a defect, not a caller's mistake.
+                    // Going on would leave the machine waiting for a result it has already been refused.
+                    throw new InvalidOperationException(
+                        $"the machine refused the result of a call ({refused.Reason}): {refused.Event.Type}");
 
                 case TerminateEffect or StartEffect or CancelEffect or DeadLetterEffect:
                     // Terminate is read from the snapshot's status below; the rest are bookkeeping with no
-                    // durable consequence of their own (a cancel drops the timer from the same ledger).
+                    // durable consequence of their own (a cancel drops the timer from the same ledger). A dead
+                    // letter for an event from outside is the machine declining it; the flow waits on as before.
                     break;
 
                 default:
                     throw new NotSupportedException(
-                        $"a statechart-backed workflow cannot run a {effect.GetType().Name}: spawning children, " +
-                        "sending to other actors and emitting to subscribers all need an actor runtime, and the " +
-                        "portable flow deliberately has none. Model it as a workflow event instead.");
+                        $"a statechart-backed workflow cannot run a {effect.GetType().Name}: spawning child " +
+                        "machines, sending to other actors and emitting to subscribers all need an actor runtime, " +
+                        "and the portable flow deliberately has none. Model it as a workflow event, or as a " +
+                        $"{nameof(StatechartCall)}.");
             }
         }
+    }
 
-        return raised;
+    // Runs one call and turns its outcome into the completion event of its invoke. The context it sees is the
+    // machine's context now, after the assigns that led into the invoking state.
+    private async Task<MachineEvent> CallAsync(
+        Run run, ISnapshot state, SpawnEffect spawn, MachineEvent cause, CancellationToken ct)
+    {
+        var call = (StatechartCall)spawn.Logic;
+        try
+        {
+            object? output = await call.RunAsync(
+                new CallContext(spawn.Id, ContextOf(run.Machine, state), spawn.Input, cause, spawn.Incarnation, run.Services),
+                ct).ConfigureAwait(false);
+            return new DoneActorEvent(spawn.Id, output, spawn.Incarnation);
+        }
+        catch (StatechartCallFailedException failed)
+        {
+            // The call reported a business failure the chart has no branch for. Left to the library, the
+            // failed call would stay attached to the machine and the snapshot could not be written at all, so
+            // the defect is named here instead.
+            if (_onError.TryGetValue(run.Machine, out IReadOnlyDictionary<string, bool?>? byInvoke) &&
+                byInvoke.TryGetValue(spawn.Id, out bool? hasOnError) && hasOnError == false)
+            {
+                throw new InvalidOperationException(
+                    $"the call '{spawn.Id}' failed with reason '{failed.Reason}', and its invoke has no onError " +
+                    "transition to take. Add onError to the invoke, or return the outcome as a value for onDone.",
+                    failed);
+            }
+
+            return new ErrorActorEvent(spawn.Id, failed, spawn.Incarnation);
+        }
     }
 
     // The machine's state after the step decides the action: done completes the flow, active parks it on
     // whatever can move it next.
-    private WorkflowAction Route(IMachineLogic machine, ISnapshot state, IReadOnlyDictionary<string, long> carried)
+    private WorkflowAction Route(Run run, ISnapshot state, IReadOnlyDictionary<string, long> carried)
     {
+        IMachineLogic machine = run.Machine;
         PersistedSnapshot persisted = machine.Persist(state);
 
         switch (persisted.Status)
@@ -245,7 +423,7 @@ public sealed class StatechartStep
         // Captured once for the whole wait: every branch resumes from the same parked context, so reading it
         // out per branch would do identical work N times.
         string? captured = Capture(machine, state);
-        IReadOnlyDictionary<string, long> deadlines = Deadlines(timers, carried);
+        IReadOnlyDictionary<string, long> deadlines = Deadlines(timers, carried, run.StartedTimers);
 
         List<EventBranch> branches =
         [
@@ -309,17 +487,19 @@ public sealed class StatechartStep
             ? new TimerEvent(eventName[TimerPrefix.Length..])
             : new NamedEvent(eventName, Payload(data));
 
-    // Keep the deadline a timer already had; give a newly started one its deadline from now. A timer that
-    // has gone away since the last step drops out, so the carried set never grows stale entries.
+    // Keep the deadline a timer already had; give a newly started one its deadline from now. A timer this step
+    // started is new even when its id was carried: a re-entered state restarts its timer under the same id, and
+    // keeping the old deadline would arm the restarted timer with nothing left on it. A timer that has gone
+    // away since the last step drops out, so the carried set never grows stale entries.
     private IReadOnlyDictionary<string, long> Deadlines(
-        PersistedTimer[] timers, IReadOnlyDictionary<string, long> carried)
+        PersistedTimer[] timers, IReadOnlyDictionary<string, long> carried, IReadOnlySet<string> started)
     {
         DateTimeOffset now = _options.Now();
         var next = new Dictionary<string, long>(StringComparer.Ordinal);
 
         foreach (PersistedTimer timer in timers)
         {
-            next[timer.Id] = carried.TryGetValue(timer.Id, out long existing)
+            next[timer.Id] = !started.Contains(timer.Id) && carried.TryGetValue(timer.Id, out long existing)
                 ? existing
                 : now.AddMilliseconds(timer.DelayMs).UtcTicks;
         }
@@ -357,10 +537,17 @@ public sealed class StatechartStep
     // The LIVE context behind a state, for the capture/apply hooks. Persist puts the context object into the
     // record as-is rather than serializing it, so this hands back the real thing — for SCXML, the datamodel
     // wrapping the engine. Only walked when a hook is supplied, so the ordinary path pays nothing.
-    private static object? ContextOf(IMachineLogic machine, ISnapshot state) => machine.Persist(state).Context;
+    //
+    // A call that is running is a child the snapshot cannot hold, so this read tolerates one. It reads the
+    // context and nothing else; nothing built here is stored.
+    private static object? ContextOf(IMachineLogic machine, ISnapshot state) =>
+        machine.Persist(state, ContextOnly).Context;
 
-    private MachineStep Persist(IMachineLogic machine, ISnapshot state, IReadOnlyDictionary<string, long> deadlines) =>
-        new(PersistedJson(machine.Persist(state)), "", deadlines, Capture(machine, state));
+    private static readonly PersistOptions ContextOnly = new()
+    {
+        AllowInlineActors = true,
+        ChildSnapshot = _ => new PersistedSnapshot { Status = "active", Value = "" },
+    };
 
     private void Release(IMachineLogic machine, ISnapshot state)
     {

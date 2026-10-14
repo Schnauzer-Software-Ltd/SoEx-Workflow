@@ -26,7 +26,8 @@ full workflow by hand, one event at a time.
 ## Other examples
 
 - [**Statechart**](Statechart/README.md): an expense-approval Manager. Its process is a statechart that
-  you draw in a tool and export as XState v6 JSON. The component layout is the same as in PiiMaker. All
+  you draw in a tool and export as XState v6 JSON. A call to an Engine chooses the next state from its
+  answer. The component layout is the same as in PiiMaker. All
   the business logic is under `Component/`, and all other code is framework. It is a console program and
   needs no runtime server: `dotnet run --project examples/Statechart`.
 - **MultiManager**: two business Managers on one workflow utility. Right-to-erasure goes to the Manager
