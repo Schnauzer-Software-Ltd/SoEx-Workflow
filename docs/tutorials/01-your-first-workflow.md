@@ -43,8 +43,8 @@ dotnet add package SoEx.Context --prerelease
 
 `SoEx.Hosting` and `SoEx.Context` are pre-release packages, so `--prerelease` is mandatory. Without it,
 `dotnet add package` reports "no stable versions available". This repo builds with version
-`0.0.0-alpha-4.1`. If `--prerelease` selects a different version, pin the correct version with
-`--version 0.0.0-alpha-4.1`.
+`0.0.0-alpha-4.1.2`. If `--prerelease` selects a different version, pin the correct version with
+`--version 0.0.0-alpha-4.1.2`.
 
 All the code in this tutorial goes in `Program.cs`. Replace the contents of that file as you go.
 
