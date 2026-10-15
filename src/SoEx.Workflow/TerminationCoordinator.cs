@@ -53,11 +53,12 @@ public sealed class TerminationCoordinator(
                 {
                     // Quarantine: the retention obligation is unmet, so the key is NOT
                     // destroyed; auto-retry stops and the instance is flagged.
+                    // The hold is recorded before the hook runs, so a hook that throws cannot lose it.
                     string safeError = SafeHeldError(instanceId, error);
-                    await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
                     heldRegistry?.Record(new HeldInstance(
                         instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
                     metrics?.ShredHeld();
+                    await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
                     return TerminationOutcome.Held;
                 }
 
@@ -110,10 +111,11 @@ public sealed class TerminationCoordinator(
             return TerminationOutcome.Terminated;
         }
 
+        // Record the hold first, as on the termination path: a hook that throws cannot lose it.
         string safeError = SafeHeldError(instanceId, error);
-        await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
         heldRegistry?.Record(new HeldInstance(instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
         metrics?.ShredHeld();
+        await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
         return TerminationOutcome.Held;
     }
 

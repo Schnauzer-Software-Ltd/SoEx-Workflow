@@ -18,31 +18,80 @@ Continue in the `FirstWorkflow` project from Tutorial 1. The tutorial takes appr
 Erasure destroys the per-instance key. All data that is sealed with that key then becomes
 unrecoverable. The law can require you to keep some data, for example a lawful-basis record or an audit
 marker. The `OnRetaining` hook fires before the shred, while the data is readable. In that hook, write
-the data that you must retain to your own store.
+the data that you must retain to your own store. A component writes it.
 
-1. In `OnboardManager`, replace the empty `OnRetaining` with an operation that writes a record.
+1. Add the `SoEx.Proxy` package. `OnboardManager` uses it to call the access component.
 
-   In this tutorial, a small in-memory list is the store. The tutorial prints the list at the end.
+```sh
+dotnet add package SoEx.Proxy --prerelease
+```
+
+2. Write an access component that writes a retained record.
+
+   In this tutorial, a small in-memory list is the store. The tutorial prints the list at the end. Put
+   these types at the bottom of `Program.cs`, with the other type declarations.
+
+```csharp
+public interface IRetainedRecordAccess
+{
+    Task Retain(string key, string record);
+}
+
+public sealed class RetainedRecords   // stands in for your own governed store
+{
+    public List<string> Items { get; } = new();
+}
+
+public sealed class RetainedRecordAccess(RetainedRecords store) : IRetainedRecordAccess
+{
+    public Task Retain(string key, string record)
+    {
+        store.Items.Add($"{key}: {record}");
+        return Task.CompletedTask;
+    }
+}
+```
+
+3. In `OnboardManager`, replace the empty `OnRetaining` with a call to the access component.
 
 ```csharp
 public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
-    public List<string> Retained { get; } = new();   // stands in for your own governed store
-
     public Task<WorkflowAction> Run(OnboardStep step) => /* …unchanged from Tutorial 1… */;
 
     // Pre-shred extract. Write must-retain data outward — never PII, and never into the result.
     // Must be idempotent on context.IdempotencyKey.
-    public Task OnRetaining(RetainingContext context)
-    {
-        Retained.Add($"{context.IdempotencyKey}: onboarding record (lawful basis: contract)");
-        return Task.CompletedTask;
-    }
+    public Task OnRetaining(RetainingContext context) =>
+        SoEx.Proxy.ForComponent<IRetainedRecordAccess>(this)
+            .Retain(context.IdempotencyKey.ToString(), "onboarding record (lawful basis: contract)");
 
     public Task OnTerminated(TerminatedContext c) => Task.CompletedTask;
     public Task OnRetentionHeld(RetentionHeldContext c) => Task.CompletedTask;
 }
 ```
+
+4. Host the access component next to `OnboardManager`. In the wiring from Tutorial 1, Step 3, add this
+   code before `var topology`:
+
+```csharp
+var retained = new RetainedRecords();
+var accessServices = new ServiceCollection();
+accessServices.AddSingleton(retained);
+accessServices.AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
+var access = new InProcBinding<IRetainedRecordAccess>("onboarding");
+```
+
+5. In the same wiring, make these three changes:
+
+   - In the entry point, replace `Proxies = []` with
+     `Proxies = [new SoEx.Topology.Client<IRetainedRecordAccess> { SubSystem = "onboarding", Service = access }]`.
+   - Replace `Components = []` with
+     `Components = [new SoEx.Topology.Host { Implementation = typeof(RetainedRecordAccess), Endpoints = [access], Proxies = [], ServiceCollection = accessServices }]`.
+   - Replace `InProcExtensions.InProcClientWithSpan(builder.Services, services);` with
+     `InProcExtensions.InProcClientWithSpan(builder.Services, services, accessServices);`.
+
+The termination calls `OnRetaining` through the SoEx client from Tutorial 1. The call goes into the host of
+`OnboardManager` as a request, so `OnRetaining` can call the access component through its proxy.
 
 ## Step 2: Stand up an in-flight instance
 
@@ -58,7 +107,7 @@ tutorial does not use it.
 
 1. Keep the governed-core wiring from Tutorial 1, Step 3.
 
-   The wiring gives you `keys`, `index`, `step`, and `component`.
+   The wiring gives you `keys`, `index`, `step`, `erasureEvents`, and `retained`.
 2. Remove the code from Tutorial 1, Step 4 and Step 5.
 
    That code declares `instanceId` and `ambient`. The code below declares these names again.
@@ -122,7 +171,7 @@ var request = ErasureRequest.For("req-1", DateTimeOffset.UtcNow, subject);
 // resolve maps each found instance id to what the coordinator needs to erase it.
 // MaxRemainingDuration: null means "unbounded" → force-terminate now.
 ErasureResult result = await coordinator.EraseAsync(request, id =>
-    new ErasureTarget(id, component, new IdempotencyKey(id, "terminal", 0), MaxRemainingDuration: null));
+    new ErasureTarget(id, erasureEvents, new IdempotencyKey(id, "terminal", 0), MaxRemainingDuration: null));
 
 foreach (var o in result.Outcomes)
     Console.WriteLine($"Erased {o.InstanceId}: {o.Action} → {o.State}");
@@ -135,7 +184,7 @@ foreach (var o in result.Outcomes)
 ```csharp
 Console.WriteLine($"After erasure — key live: {keys.Has(instanceId)}");
 Console.WriteLine($"After erasure — payload readable: {CanDecrypt(step, instanceId, sealedPayload)}");
-Console.WriteLine($"Retained outward: {string.Join("; ", component.Retained)}");
+Console.WriteLine($"Retained outward: {string.Join("; ", retained.Items)}");
 ```
 
 ## Run it
@@ -162,7 +211,8 @@ Retained outward: onboard-1/terminal/0: onboarding record (lawful basis: contrac
 The request named a subject. The coordinator found the subject in the index and found `onboard-1`. Then
 it force-terminated the instance in this sequence:
 
-1. `OnRetaining` fired. It wrote the lawful-basis record to your own store.
+1. `OnRetaining` fired. It called the access component, which wrote the lawful-basis record to your own
+   store.
 2. SoEx destroyed the per-instance key.
 3. SoEx removed the subject from the index.
 

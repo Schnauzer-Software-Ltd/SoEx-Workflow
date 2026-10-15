@@ -23,12 +23,12 @@ The tutorial takes approximately 15 minutes. You need the .NET 10 SDK and a term
 
 The `SoEx.Workflow*` packages are not on nuget.org at this time (see
 [Packages](../reference/packages.md)). Thus you reference the built projects. You can clone this repo
-and add project references, or you can build the assemblies and reference them. `SoEx.Hosting` and
-`SoEx.Context` are the base-SoEx packages that your composition root needs.
+and add project references, or you can build the assemblies and reference them. `SoEx.Hosting`,
+`SoEx.Context`, and `SoEx.Transport.InProc` are the base-SoEx packages that your composition root needs.
 
 1. Make a console app.
 2. Add references to the `SoEx.Workflow*` projects from a clone of this repo.
-3. Add the `SoEx.Hosting` and `SoEx.Context` packages with `--prerelease`.
+3. Add the `SoEx.Hosting`, `SoEx.Context`, and `SoEx.Transport.InProc` packages with `--prerelease`.
 
 ```sh
 dotnet new console -n FirstWorkflow
@@ -39,9 +39,10 @@ dotnet add reference ../soex-workflow/src/SoEx.Transport.Workflow/SoEx.Transport
 dotnet add reference ../soex-workflow/src/SoEx.Workflow.Runtime.InMemory/SoEx.Workflow.Runtime.InMemory.csproj
 dotnet add package SoEx.Hosting --prerelease
 dotnet add package SoEx.Context --prerelease
+dotnet add package SoEx.Transport.InProc --prerelease
 ```
 
-`SoEx.Hosting` and `SoEx.Context` are pre-release packages, so `--prerelease` is mandatory. Without it,
+The base-SoEx packages are pre-release packages, so `--prerelease` is mandatory. Without it,
 `dotnet add package` reports "no stable versions available". This repo builds with version
 `0.0.0-alpha-4.1.2`. If `--prerelease` selects a different version, pin the correct version with
 `--version 0.0.0-alpha-4.1.2`.
@@ -136,6 +137,8 @@ using Microsoft.Extensions.Hosting;
 using SoEx.Abstractions;
 using SoEx.Context;
 using SoEx.Hosting;
+using SoEx.Hosting.Default;                                 // DefaultPipeline
+using SoEx.Transport.InProc;                                // InProcBinding / InProcExtensions
 using SoEx.Transport.Workflow;                              // WorkflowBinding / WorkflowListeners
 using SoEx.Workflow;
 using SoEx.Workflow.Runtime.InMemory;
@@ -143,18 +146,31 @@ using SoEx.Workflow.Runtime.InMemory;
 IInstanceKeyStore keys  = new InMemoryInstanceKeyStore();   // mints + destroys the per-instance key
 ISubjectIndex     index = new InMemorySubjectIndex();        // maps subjects → instances for erasure
 IIdempotencyStore idem  = new InMemoryIdempotencyStore();    // collapses at-least-once redelivery
-var component = new OnboardManager();
 
 var listeners = new WorkflowListeners();
-var binding   = new WorkflowBinding<IOnboardManager>("onboarding");
+var binding   = new WorkflowBinding<IOnboardManager>("onboarding");   // the governed steps arrive here
+var erasure   = new InProcBinding<IErasureEvent>("onboarding");      // the erasure events arrive here
 var services  = new ServiceCollection();
 services.AddSingleton(listeners);
 services.AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
 
-var topology = new SoEx.Topology.HostMock   // qualified — `Host` below is Microsoft's host builder
+var topology = new SoEx.Topology.System   // qualified — `Host` below is Microsoft's host builder
 {
-    Instance = component, Implementation = component.GetType(),
-    Endpoints = [binding], Proxies = [], ServiceCollection = services,
+    Defaults = new DefaultPipeline(),
+    SubSystems =
+    [
+        new SoEx.Topology.SubSystem
+        {
+            Name = "onboarding",
+            EntryPoint = new SoEx.Topology.Host
+            {
+                Implementation = typeof(OnboardManager),
+                Endpoints = [binding, erasure], Proxies = [], ServiceCollection = services,
+            },
+            Components = [],
+        },
+    ],
+    Clients = [new SoEx.Topology.Client<IErasureEvent> { SubSystem = "onboarding", Service = erasure }],
 };
 // The host's serializer binds every value to its declared type. The subject and your steps travel in
 // slots declared `object`, so name them up front.
@@ -164,6 +180,7 @@ var knownTypes = new KnownTypes([
 ]);
 
 var builder = Host.CreateApplicationBuilder();
+InProcExtensions.InProcClientWithSpan(builder.Services, services);
 builder.SoEx(topology, knownTypes);
 IHost host = builder.Build();
 host.Start();
@@ -171,10 +188,14 @@ host.Start();
 IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address.Uri);
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
-WorkflowRegistration.RequireErasureEvent(component.GetType());   // fail fast if you forgot the contracts
-var step     = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
-var termination = new GovernedTermination(component, keys, index);
+WorkflowRegistration.RequireErasureEvent(typeof(OnboardManager));   // fail fast if you forgot the contracts
+var step        = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
+IErasureEvent erasureEvents = host.Services.GetRequiredService<IErasureEvent>();   // the SoEx client
+var termination = new GovernedTermination(erasureEvents, keys, index);
 ```
+
+The termination calls the erasure events through a SoEx client. Each call goes into the component's host
+as a request, so an erasure event can call the components of your component. Tutorial 2 uses this.
 
 ## Step 4: Seal the first step and run it
 

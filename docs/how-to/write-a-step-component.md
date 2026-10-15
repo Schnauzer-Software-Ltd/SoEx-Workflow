@@ -140,6 +140,12 @@ See [`WorkflowAction`](../reference/workflow-action.md#enrolling-a-subject-the-s
    time of the composition root. The compiler does not find the missing declaration. The check runs
    when you compose the host.
 
+2. Give `GovernedTermination` the `IErasureEvent` client from the host.
+
+   The client sends each hook into the host of your component as a request. A hook can then call your
+   other components through their proxies. The [wiring sequence](../reference/governed-core.md#the-wiring-sequence)
+   shows the client.
+
 ```csharp
 public sealed class OnboardManager : IOnboardManager, IErasureEvent
 {
@@ -149,13 +155,13 @@ public sealed class OnboardManager : IOnboardManager, IErasureEvent
     // Write must-retain data outward to your own store, never into the result (it's journaled in
     // clear) and never PII. Must be idempotent on context.IdempotencyKey.
     public Task OnRetaining(RetainingContext context)
-        => _retained.WriteAsync(context.IdempotencyKey, mustRetainRecord);
+        => Proxy.ForComponent<IRetainedRecordAccess>(this).Retain(context.IdempotencyKey.ToString(), mustRetainRecord);
 
     // Post-termination, post-shred, PII-free bookkeeping (audit, release locks).
     public Task OnTerminated(TerminatedContext context) => Task.CompletedTask;
 
-    // Extraction-failure quarantine (non-final): the key is kept, retry stopped, the instance
-    // flagged for an audited re-drive.
+    // Quarantine (non-final) after a failed extraction or a parked step: the key is kept, retry
+    // stopped, the instance recorded held for an audited re-drive.
     public Task OnRetentionHeld(RetentionHeldContext context) => Task.CompletedTask;
 }
 ```

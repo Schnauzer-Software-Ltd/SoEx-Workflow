@@ -105,6 +105,11 @@ public GovernedTermination(
 public Task<TerminationOutcome> TerminateAsync(string instanceId, IdempotencyKey idempotencyKey, TerminationTrigger trigger);
 ```
 
+Give `contracts` as a SoEx client of `IErasureEvent`. Resolve the client from the host. The client sends
+each erasure event into the host of your component as a request. In the request, an erasure event can
+call the components of your component through their proxies. The [wiring sequence](#the-wiring-sequence)
+shows the client.
+
 `TerminationTrigger` identifies the cause of the termination: a natural completion or a forced erasure.
 `TerminationOutcome` has two values:
 
@@ -143,50 +148,65 @@ and does not interpret your payload. The facts are `InstanceId`, `Sequence`, `Dt
 
 The wiring sequence has five parts. Do them in this order:
 
-1. Host the component.
+1. Host the component. Bind it to `WorkflowBinding<I>` and to `InProcBinding<IErasureEvent>`, and add a
+   client of `IErasureEvent` to the system.
 2. Start the host.
-3. Resolve the endpoint.
+3. Resolve the endpoint and the `IErasureEvent` client.
 4. Build the `GovernedStep`.
-5. Build the `GovernedTermination`.
+5. Build the `GovernedTermination` on the client.
 
 ```csharp
 IInstanceKeyStore keys  = new InMemoryInstanceKeyStore();
 ISubjectIndex     index = new InMemorySubjectIndex();
 IIdempotencyStore idem  = new InMemoryIdempotencyStore();
-var component = new OnboardManager();
 
 var listeners = new WorkflowListeners();
-var binding   = new WorkflowBinding<IOnboardManager>("onboarding");
+var binding   = new WorkflowBinding<IOnboardManager>("onboarding");   // the governed steps arrive here
+var erasure   = new InProcBinding<IErasureEvent>("onboarding");      // the erasure events arrive here
 var services  = new ServiceCollection();
 services.AddSingleton(listeners);
 services.AddSingleton<IContextFlowPolicy, SubjectContextFlowPolicy>();
 
-var topology = new SoEx.Topology.HostMock   // qualified — `Host` below is Microsoft's host builder
+var topology = new SoEx.Topology.System   // qualified — `Host` below is Microsoft's host builder
 {
-    Instance = component, Implementation = component.GetType(),
-    Endpoints = [binding], Proxies = [], ServiceCollection = services,
+    Defaults = new DefaultPipeline(),
+    SubSystems =
+    [
+        new SoEx.Topology.SubSystem
+        {
+            Name = "onboarding",
+            EntryPoint = new SoEx.Topology.Host
+            {
+                Implementation = typeof(OnboardManager),
+                Endpoints = [binding, erasure], Proxies = [], ServiceCollection = services,
+            },
+            Components = [],
+        },
+    ],
+    Clients = [new SoEx.Topology.Client<IErasureEvent> { SubSystem = "onboarding", Service = erasure }],
 };
 var knownTypes = new KnownTypes([.. WorkflowKnownTypes.Framework /* , your step DTOs */]);
 var builder = Host.CreateApplicationBuilder();
+InProcExtensions.InProcClientWithSpan(builder.Services, services);
 builder.SoEx(topology, knownTypes);
 IHost host = builder.Build();
 host.Start();                                                          // endpoint registers as the host starts
 
 IWorkflowDispatch endpoint = listeners.ForAddress(binding.Transport.Address.Uri);   // resolve AFTER Start
 var serializer = host.Services.GetRequiredService<IMessageSerializer>();
+IErasureEvent erasureEvents = host.Services.GetRequiredService<IErasureEvent>();   // the SoEx client
 
-WorkflowRegistration.RequireErasureEvent(component.GetType());
-var step     = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
-var termination = new GovernedTermination(component, keys, index);
+WorkflowRegistration.RequireErasureEvent(typeof(OnboardManager));
+var step        = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
+var termination = new GovernedTermination(erasureEvents, keys, index);
 ```
 
 Resolve the endpoint only after `host.Start()`. The snippet is the full composition, and it includes the
 guard. The private test suite puts this composition into a helper that returns `(step, termination)`.
 
-The snippet gives no pipeline. Thus, the composition uses the stock `DefaultPipeline` and its
-System.Text.Json serializer. For this reason, the snippet gives the known types. To use a different
-serializer, also give a pipeline: `builder.SoEx(topology, knownTypes, pipeline)`. See
-[choose a message serializer](../how-to/choose-a-serializer.md).
+The snippet sets `Defaults` to the stock `DefaultPipeline`. Its serializer is System.Text.Json. For this
+reason, the snippet gives the known types. To use a different serializer, set `Defaults` to a pipeline
+with that serializer. See [choose a message serializer](../how-to/choose-a-serializer.md).
 
 ## Related pages
 

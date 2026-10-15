@@ -73,7 +73,9 @@ public static class Program
         var topology = new SoEx.Topology.System
         {
             Defaults = new DefaultPipeline(),
-            Clients = [],
+            // The termination calls the manager's erasure hooks through this client, so each hook runs as a
+            // request in the manager's host and can call the manager's components.
+            Clients = [Proxy<IErasureEvent>()],
             SubSystems =
             [
                 new SoEx.Topology.SubSystem
@@ -87,7 +89,7 @@ public static class Program
                     EntryPoint = new SoEx.Topology.Host
                     {
                         Implementation = typeof(ExpenseManager),
-                        Endpoints = [new WorkflowBinding<IExpenseManager>(SubSystem)],
+                        Endpoints = [new WorkflowBinding<IExpenseManager>(SubSystem), new InProcBinding<IErasureEvent>(SubSystem)],
                         Proxies = [Proxy<IBudgetEngine>(), Proxy<INotificationAccess>()],
                         ServiceCollection = managerServices,
                     },
@@ -117,9 +119,7 @@ public static class Program
         var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 
         var step = new GovernedStep<IExpenseManager>(endpoint, serializer, idempotency: null, keys, index);
-        // The termination calls only the manager's erasure hooks, which use none of its components.
-        var termination = new GovernedTermination(
-            new ExpenseManager(process, new BudgetEngine(), new NotificationAccess()), keys, index);
+        var termination = new GovernedTermination(host.Services.GetRequiredService<IErasureEvent>(), keys, index);
 
         // ---- four claims ------------------------------------------------------------------------------
 

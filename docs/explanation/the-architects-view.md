@@ -108,7 +108,7 @@ Your entrypoint implements `IErasureEvent`:
 
 - `OnRetaining` extracts must-retain data.
 - `OnTerminated` does the bookkeeping after the shred.
-- `OnRetentionHeld` is the quarantine for a failed extraction.
+- `OnRetentionHeld` is the quarantine for a failed extraction or a parked step.
 
 The utility drives crypto-shred through this contract at the end of each instance. The `External`
 contract turns "forget subject S" into one system operation that your host schedules. Thus erasure is

@@ -12,6 +12,11 @@ namespace SoEx.Workflow;
 /// instance with no retention obligation still has its key destroyed (a no-op extract that always
 /// succeeds), so the key never outlives the instance.
 /// </para>
+/// <para>
+/// Pass the contracts as the host's SoEx client of <see cref="IErasureEvent"/>, not the component object.
+/// The client sends each hook into the component's host as a request, so a hook can call the component's
+/// own components through their proxies; a hook called on the bare object runs outside any request scope.
+/// </para>
 /// </summary>
 public sealed class GovernedTermination
 {
