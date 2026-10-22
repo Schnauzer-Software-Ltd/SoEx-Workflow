@@ -68,7 +68,7 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
             {
                 string id = DeterministicInstanceId.Keyed(
                     instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
-                await utility.RaiseEventAsync("onboard", id, "account-verified");
+                await utility.RaiseEventAsync(new WfSubSystem.WorkflowEvent("onboard", id, "account-verified"));
                 return Raised(id);
             }
             case TriggerBase.InviteAccepted t:
@@ -77,14 +77,10 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
                     instanceIdSecret.Value, "onboard", t.OrgId, t.Email, t.Attempt.ToString());
                 // Bare when nobody was named, data-carrying when someone was. Either way the flow resumes into
                 // the continuation IT declared — the acceptance only says who, never what happens next.
-                if (t.ConfirmedUser is { Length: > 0 } confirmedUser)
+                await utility.RaiseEventAsync(new WfSubSystem.WorkflowEvent("onboard", id, "invite-accepted")
                 {
-                    await utility.RaiseEventAsync("onboard", id, "invite-accepted", new InviteAcceptance(confirmedUser));
-                }
-                else
-                {
-                    await utility.RaiseEventAsync("onboard", id, "invite-accepted");
-                }
+                    Data = t.ConfirmedUser is { Length: > 0 } confirmedUser ? new InviteAcceptance(confirmedUser) : null,
+                });
 
                 return Raised(id);
             }
@@ -97,13 +93,13 @@ public sealed partial class MembershipManager(MembershipPolicy policy, InstanceI
             case TriggerBase.PaymentUpdated t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "renew", t.SubscriberId);
-                await utility.RaiseEventAsync("renew", id, "payment-updated");
+                await utility.RaiseEventAsync(new WfSubSystem.WorkflowEvent("renew", id, "payment-updated"));
                 return Raised(id);
             }
             case TriggerBase.CancellationRequested t:
             {
                 string id = DeterministicInstanceId.Keyed(instanceIdSecret.Value, "renew", t.SubscriberId);
-                await utility.RaiseEventAsync("renew", id, "cancel-requested");
+                await utility.RaiseEventAsync(new WfSubSystem.WorkflowEvent("renew", id, "cancel-requested"));
                 return Raised(id);
             }
             case TriggerBase.StartOffboarding t:

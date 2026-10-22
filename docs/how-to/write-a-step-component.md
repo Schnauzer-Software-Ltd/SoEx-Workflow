@@ -72,8 +72,8 @@ A step operation has one of two shapes:
 - the step DTO, then its event data
 
 The host refuses all other shapes when you build it. If a raise carries data and your operation has no
-parameter for it, the instance stops and holds. The instance keeps its key. To continue, extend the
-component and re-drive the instance. See
+parameter for it, the instance parks. The instance keeps its key, but the framework cannot resume it.
+Declare the parameter before you raise data at the operation. See
 [Receiving data with an event](../reference/workflow-action.md#receiving-data-with-an-event).
 
 ```csharp
@@ -161,7 +161,7 @@ public sealed class OnboardManager : IOnboardManager, IErasureEvent
     public Task OnTerminated(TerminatedContext context) => Task.CompletedTask;
 
     // Quarantine (non-final) after a failed extraction or a parked step: the key is kept, retry
-    // stopped, the instance recorded held for an audited re-drive.
+    // stopped, the instance recorded held (HeldInstance.Kind says which).
     public Task OnRetentionHeld(RetentionHeldContext context) => Task.CompletedTask;
 }
 ```

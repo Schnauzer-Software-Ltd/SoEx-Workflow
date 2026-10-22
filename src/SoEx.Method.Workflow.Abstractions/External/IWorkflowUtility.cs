@@ -33,8 +33,9 @@ public interface IWorkflowUtility
     /// <paramref name="olderThanSeconds"/> must exceed the longest legitimate flow so live work is untouched.</summary>
     Task<long> SweepAbandonedAsync(long olderThanSeconds);
 
-    /// <summary>One pass: re-drives every quarantined (held) instance — an audited retry of its termination
-    /// extraction. Returns the number that re-drove to a clean termination this pass. The host owns the cadence.</summary>
+    /// <summary>One pass: re-drives every retention hold — an audited retry of its termination extraction.
+    /// Parked step failures are skipped: they cannot be resumed, and keep their keys until a deliberate
+    /// termination. Returns the number that re-drove to a clean termination this pass. The host owns the cadence.</summary>
     Task<long> ReDriveHeldAsync();
 
     /// <summary>One pass: re-evaluates open erasure requests against the statutory clock, force-terminating

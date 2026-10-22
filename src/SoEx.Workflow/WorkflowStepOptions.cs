@@ -5,8 +5,9 @@ namespace SoEx.Workflow;
 /// and which exceptions are terminal (never retried). One documented cross-runtime default — bounded
 /// exponential backoff, then, when retries are exhausted, <b>park-before-shred</b>: the instance is
 /// quarantined with its key <b>retained</b> (recorded held, <c>OnRetentionHeld</c> fired), never
-/// crypto-shred, so a transient blip can no longer destroy the sealed journal. An operator re-drives a held
-/// instance (resume) or deliberately terminates it (which then shreds). Each adapter maps this onto its
+/// crypto-shred, so a transient blip can no longer destroy the sealed journal. No runtime can resume a parked
+/// instance, so the maintenance re-drive skips it (<see cref="HeldKind.Parked"/>); an operator deliberately
+/// terminates it (which then shreds). Each adapter maps this onto its
 /// engine's native retry primitive (Temporal <c>RetryPolicy</c>, DTFx <c>TaskOptions</c>, Zeebe job retries);
 /// the in-process and Elsa drivers apply it directly around the step dispatch.
 /// </summary>

@@ -78,9 +78,10 @@ public sealed class WorkflowDriver<I>(
             // Park-before-shred: a failed portable instance is quarantined with its key RETAINED — a transient
             // step failure must never crypto-shred the sealed journal (the old behaviour destroyed the instance
             // on the first blip). The key is destroyed only on a deliberate termination: a Complete above, or an
-            // erasure/force-terminate driven through the coordinator. An operator re-drives the held instance or
-            // terminates it explicitly. Idempotent — if a Complete already shredded, the key is gone and the
-            // coordinator treats the park as a no-op; continue-as-new stays in the loop and never reaches here.
+            // erasure/force-terminate driven through the coordinator. The park cannot be resumed, so the
+            // maintenance re-drive skips it and an operator terminates it explicitly. Idempotent — if a Complete
+            // already shredded, the key is gone and the coordinator treats the park as a no-op; continue-as-new
+            // stays in the loop and never reaches here.
             await termination.QuarantineAsync(
                 runtime.InstanceId,
                 new IdempotencyKey(runtime.InstanceId, "terminal", lastSequence),

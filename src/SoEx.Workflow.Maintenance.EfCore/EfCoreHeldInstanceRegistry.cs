@@ -51,6 +51,7 @@ public sealed class EfCoreHeldInstanceRegistry : IHeldInstanceRegistry
                 Attempts = held.Attempts,
                 HeldAt = held.HeldAt,
                 LastError = held.LastError,
+                Kind = held.Kind,
             });
         }
         else
@@ -60,6 +61,7 @@ public sealed class EfCoreHeldInstanceRegistry : IHeldInstanceRegistry
             row.Attempts = held.Attempts;
             row.HeldAt = held.HeldAt;
             row.LastError = held.LastError;
+            row.Kind = held.Kind;
         }
 
         try
@@ -92,9 +94,9 @@ public sealed class EfCoreHeldInstanceRegistry : IHeldInstanceRegistry
     {
         using DbContext db = New();
         return [.. db.Set<HeldEntity>()
-            .Select(e => new { e.InstanceId, e.DtoType, e.Sequence, e.Attempts, e.HeldAt, e.LastError })
+            .Select(e => new { e.InstanceId, e.DtoType, e.Sequence, e.Attempts, e.HeldAt, e.LastError, e.Kind })
             .AsEnumerable()
             .Select(e => new HeldInstance(
-                e.InstanceId, new IdempotencyKey(e.InstanceId, e.DtoType, e.Sequence), e.Attempts, e.HeldAt, e.LastError))];
+                e.InstanceId, new IdempotencyKey(e.InstanceId, e.DtoType, e.Sequence), e.Attempts, e.HeldAt, e.LastError, e.Kind))];
     }
 }

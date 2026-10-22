@@ -27,7 +27,7 @@ component that does not implement `IErasureEvent` gets a no-op termination with 
 |---|---|---|
 | `OnRetaining(RetainingContext)` | Before the shred, while the payload is readable, on each termination path (natural completion and erasure). | Extract the data that you must keep, and write it to your own store. Make the hook idempotent on `context.IdempotencyKey`. Never write PII into the result. |
 | `OnTerminated(TerminatedContext)` | After the termination and after the shred. | Do bookkeeping that contains no PII, for example audit or lock release. |
-| `OnRetentionHeld(RetentionHeldContext)` | The extraction failed after the retry boundary, or a step failed and the framework parked the instance. This state is not final. | The framework keeps the key, stops the automatic retry, and records the instance in the held registry for an audited re-drive. It records the instance before it calls the hook, so the record stays if the hook fails. Record or alert as necessary. |
+| `OnRetentionHeld(RetentionHeldContext)` | The extraction failed after the retry boundary, or a step failed and the framework parked the instance. This state is not final. | The framework keeps the key, stops the automatic retry, and records the instance in the held registry. It records the instance before it calls the hook, so the record stays if the hook fails. A failed extraction waits for an audited re-drive. A parked instance stays held until an intentional termination. Record or alert as necessary. |
 
 The framework calls each hook through the `IErasureEvent` client that you give to `GovernedTermination`.
 Each call is a SoEx request in the host of your component. Thus a hook can call the components of your
@@ -39,7 +39,7 @@ client.
 ```
 OnRetaining (succeeds) ──▶ destroy key (crypto-shred) ──▶ prune subject index ──▶ OnTerminated
 OnRetaining (fails)    ──▶ key retained ──▶ record held ──▶ OnRetentionHeld   (quarantine; re-drive later)
-step fails (park)      ──▶ key retained ──▶ record held ──▶ OnRetentionHeld   (quarantine; re-drive later)
+step fails (park)      ──▶ key retained ──▶ record held ──▶ OnRetentionHeld   (parked; terminate to end)
 ```
 
 The framework mints the per-instance key on first use. It hard-deletes the key at termination. After the

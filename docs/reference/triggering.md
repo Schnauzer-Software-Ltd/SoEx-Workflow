@@ -111,7 +111,7 @@ through a proxy. A host holds the gateway and the sealer. A Manager uses this fa
 public interface IWorkflowUtility
 {
     Task<StartOutcome> StartAsync(string flowKey, string instanceId, string subject, object firstStep);
-    Task RaiseEventAsync(string flowKey, string instanceId, string eventName, object? eventData = null);
+    Task RaiseEventAsync(WorkflowEvent raise);
     Task<string[]> SubjectsForAsync(string instanceId);
     Task<string[]> InstancesForAsync(string flowKey, string subject);
 }
@@ -120,9 +120,33 @@ public interface IWorkflowUtility
 | Member | Use when |
 |---|---|
 | `StartAsync` | You start a flow. It seals `firstStep` with the key of the instance and binds `subject` as the ambient. It returns `AlreadyExists` as data and does not throw. A duplicate start from a derived id is the usual case, and the answer must go back through the proxy. |
-| `RaiseEventAsync` | You continue a parked flow with a business event. The flow resumes into the continuation that it sealed at wait time. The caller needs no knowledge of the flow. To send data with the event, pass it as `eventData`. The utility seals it with `SealEventData` under the key of the instance. The step operation of the flow must declare a second parameter to receive it, or the seal rejects the raise. |
+| `RaiseEventAsync` | You continue a parked flow with a business event. The flow resumes into the continuation that it sealed at wait time. The caller needs no knowledge of the flow. A `WorkflowEvent` names the flow, the instance, and the event. Its optional parts are described in [`WorkflowEvent`](#workflowevent). |
 | `SubjectsForAsync` | You need the subjects that the index still maps to an instance. The main use is a must-retain carve-out in `OnRetaining`. It opens a blob sealed with the key of the instance. Thus, after the shred of the instance, it returns no subjects. |
 | `InstancesForAsync` | You need the instances of this flow that hold a subject. This is the reverse of `SubjectsForAsync`. |
+
+### `WorkflowEvent`
+
+`WorkflowEvent` is the raise that a Manager sends. The constructor takes the parts that every raise needs.
+The optional parts are init properties. Set only the parts that you need.
+
+```csharp
+public sealed record WorkflowEvent(string FlowKey, string InstanceId, string Name)
+{
+    public object? Data { get; init; }
+    public string? RaiseId { get; init; }
+}
+
+await utility.RaiseEventAsync(new WorkflowEvent("onboard", id, "account-verified") { RaiseId = "verified" });
+```
+
+| Member | Use when |
+|---|---|
+| `FlowKey`, `InstanceId`, `Name` | Always. The utility rejects a `Name` that contains a subject that the index knows for the instance, because the runtime journals the name in clear text. |
+| `Data` | The raiser knows something that the flow cannot know. The utility seals it with `SealEventData` under the key of the instance. The step operation of the flow must declare a second parameter to receive it, or the seal rejects the raise. On an allow-listed serializer, add the type of the data to `KnownTypes`. |
+| `RaiseId` | The same event can arrive more than once, for example from a webhook that retries. A raise that repeats an id that the instance handled returns and does not resume the flow again. Every route that raises the same event must send the same id. The utility rejects an id that contains a subject that the index knows for the instance, because the runtime journals the id in clear text. The behavior is different on each runtime. See the [idempotent-raise row of the matrix](runtime-matrix.md#gateway-semantics). |
+
+A `RaiseId` removes only duplicates of a raise that succeeded. A raise that arrives when the instance does
+not wait for the event fails as before.
 
 ### When to use `InstancesForAsync`
 

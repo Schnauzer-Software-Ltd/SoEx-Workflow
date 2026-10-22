@@ -34,6 +34,7 @@ public sealed class RavenDbHeldInstanceRegistry : IHeldInstanceRegistry
         public int Attempts { get; set; }
         public DateTimeOffset HeldAt { get; set; }
         public string? LastError { get; set; }
+        public HeldKind Kind { get; set; }
 
         public static Doc From(HeldInstance h) => new()
         {
@@ -43,9 +44,10 @@ public sealed class RavenDbHeldInstanceRegistry : IHeldInstanceRegistry
             Attempts = h.Attempts,
             HeldAt = h.HeldAt,
             LastError = h.LastError,
+            Kind = h.Kind,
         };
 
         public HeldInstance To() =>
-            new(InstanceId, new IdempotencyKey(InstanceId, DtoType, Sequence), Attempts, HeldAt, LastError);
+            new(InstanceId, new IdempotencyKey(InstanceId, DtoType, Sequence), Attempts, HeldAt, LastError, Kind);
     }
 }

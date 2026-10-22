@@ -38,8 +38,9 @@ public interface IErasureEvent
     Task OnTerminated(TerminatedContext context);
 
     /// <summary>
-    /// Extraction-failure quarantine (non-final): the key is retained, auto-retry
-    /// stopped, and the instance flagged for an audited re-drive.
+    /// Quarantine (non-final) after a failed extraction or a parked step failure: the key is retained, auto-retry
+    /// stopped, and the instance recorded in the held log. A failed extraction is retried by the audited re-drive;
+    /// a park stays held until a deliberate termination.
     /// </summary>
     Task OnRetentionHeld(RetentionHeldContext context);
 }

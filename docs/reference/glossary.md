@@ -191,8 +191,10 @@ for bookkeeping with no PII, for example an audit or the release of locks.
 failure. This state is not final. The key stays, the automatic retry stops, and the instance gets a flag
 for an audited re-drive. See *Held*.
 
-**Held** — Held is the state of a quarantined instance. Its `OnRetaining` extraction failed after the
-retry limit. Its key thus stays, and the framework does not shred it, until an audited re-drive. The
+**Held** — Held is the state of a quarantined instance. `HeldInstance.Kind` gives the cause. For a
+`RetentionHold`, its `OnRetaining` extraction failed after the retry limit. Its key thus stays, and the
+framework does not shred it, until an audited re-drive. For a `Parked` instance, a step failed after the
+retry limit. The framework cannot resume it, so its key stays until an intentional termination. The
 state ("held") and the hook that fires when the instance enters it (`OnRetentionHeld`) are the same
 retention obligation. The durable record is in an `IHeldInstanceRegistry`.
 

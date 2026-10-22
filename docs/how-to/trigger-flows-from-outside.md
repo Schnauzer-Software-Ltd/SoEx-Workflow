@@ -146,7 +146,7 @@ each runtime.
 
 To make one raise idempotent:
 
-1. Pass a stable `raiseId` to the raise.
+1. Pass a stable `raiseId` to the raise. Through the workflow utility, set `WorkflowEvent.RaiseId`.
 
 The behavior is different on each runtime. See the
 [idempotent-raise row of the matrix](../reference/runtime-matrix.md#gateway-semantics).

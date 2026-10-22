@@ -32,7 +32,7 @@ Each pass has a one-pass call on two surfaces:
 |---|---|---|---|
 | Drain | Filed erasure requests that wait for their crypto-shred. | `EraseInstancesAsync(request, instanceIds, resolve)`, one call for each admitted request | `DrainEraseRequestsAsync()` |
 | Sweep abandoned | Instances for a subject that files no erasure request. | `SweepAsync(olderThan, resolve)` | `SweepAbandonedAsync(olderThanSeconds)` |
-| Re-drive held | Erasures in quarantine because `OnRetaining` failed after all retries. | `ReDriveHeldAsync(resolve)` | `ReDriveHeldAsync()` |
+| Re-drive held | Erasures in quarantine because `OnRetaining` failed after all retries. The pass skips parked instances (`HeldKind.Parked`) and counts them in `ReDriveReport.Parked`. | `ReDriveHeldAsync(resolve)` | `ReDriveHeldAsync()` |
 | Review deadlines | Instances that complete naturally, with a statutory window that closes soon. | `ReviewDeadlinesAsync(escalateWithin, resolve)` | `ReviewDeadlinesAsync(escalateWithinSeconds)` |
 
 A "forget subject S" request re-drives each indexed instance for that subject that has not terminated.

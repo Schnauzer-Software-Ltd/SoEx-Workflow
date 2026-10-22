@@ -68,7 +68,8 @@ Logs and traces are outside the shred boundary. A subject in a log or a trace st
   [Governance services](../reference/governance-services.md).
 - [ ] Learn the step-failure policy. The framework retries a step under a bounded policy. When the step
   uses all its attempts, the framework **parks** the instance and keeps its key, so the instance stays
-  recoverable. Monitor the held count, and re-drive held instances. On Restate, a failed step still retries
+  recoverable. Monitor the held count. Re-drive retention holds, and terminate each parked instance
+  after you investigate it. On Restate, a failed step still retries
   with no limit, so alert on stuck instances there. See the step-failure row in the
   [Runtime matrix](../reference/runtime-matrix.md#step-failure-retry-and-poison).
 

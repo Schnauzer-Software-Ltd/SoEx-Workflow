@@ -101,6 +101,11 @@ Read these limits before you build a deployment on SoEx.Workflow. They are discl
   > Own the schema migrations if you run the EF-backed stores in production. Generate EF migrations
   > against the `DbContext`s until first-class migrations are available. A schema change otherwise needs
   > a new database.
+
+  The held table has a `Kind` column (an integer: `0` is a retention hold, `1` is a park). An existing
+  database made before this column does not have it. Add the column with a default of `0` before you
+  upgrade. Existing rows then read as retention holds. The RavenDB held registry needs no change: a
+  document with no `Kind` reads as a retention hold.
 - **Durable Task uses a preview SDK, verified on the emulator only.** The Durable Task adapter pins
   `Microsoft.DurableTask.* 1.25.0-preview.1`. The tests run it against the DTS **emulator**. They do not
   run it against a real Azure Durable Task Scheduler. Here, "Durable Task works" means "the emulator

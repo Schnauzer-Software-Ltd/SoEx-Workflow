@@ -122,7 +122,8 @@ contain a subject id:
 - the instance id
 - the event name of each branch of a portable wait, and the event name of a raise through the workflow
   utility
-- the raise id, if the gateway has a `GatewaySealGuard`
+- the raise id of a raise through the workflow utility, and the raise id at a gateway that has a
+  `GatewaySealGuard`
 - the final result of the portable flow
 - a native step result
 

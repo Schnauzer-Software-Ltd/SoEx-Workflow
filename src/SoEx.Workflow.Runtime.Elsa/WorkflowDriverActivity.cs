@@ -99,7 +99,7 @@ public sealed class WorkflowDriverActivity : Activity
             // Park-before-shred: a failed portable instance is quarantined with its key RETAINED — a transient
             // step failure must never crypto-shred the sealed journal (the old behaviour shredded on the first
             // blip). The suspend paths (wait/delay) return normally and Loop stays in the loop, so only a real
-            // failure reaches here. Recovery is a re-drive or a deliberate terminate; idempotent if a Complete
+            // failure reaches here. Recovery is a deliberate terminate (the re-drive skips parks); idempotent if a Complete
             // already shredded (key gone → the coordinator no-ops).
             await bound.Termination.QuarantineAsync(
                 bound.SagaInstanceId, new IdempotencyKey(bound.SagaInstanceId, "terminal", _sequence),

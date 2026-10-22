@@ -11,6 +11,7 @@ public sealed class HeldEntity
     public int Attempts { get; set; }
     public DateTimeOffset HeldAt { get; set; }
     public string? LastError { get; set; }
+    public HeldKind Kind { get; set; }
 }
 
 /// <summary>An open erasure-request row (keyed on <see cref="RequestId"/>). The id lists are stored as

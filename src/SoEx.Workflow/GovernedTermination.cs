@@ -43,7 +43,7 @@ public sealed class GovernedTermination
     /// <summary>
     /// Park a failing instance with its key retained (park-before-shred) instead of crypto-shredding it on the
     /// failure path. A driver's failure catch calls this — a transient step failure must not destroy the sealed
-    /// journal; the instance is quarantined (held) for an audited re-drive or a deliberate terminate.
+    /// journal; the instance is quarantined (held, <see cref="HeldKind.Parked"/>) until a deliberate terminate.
     /// </summary>
     public Task<TerminationOutcome> QuarantineAsync(string instanceId, IdempotencyKey key, int attempts, Exception error) =>
         _termination.QuarantineAsync(instanceId, _contracts, key, attempts, error);

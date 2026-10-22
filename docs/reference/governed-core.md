@@ -114,8 +114,9 @@ shows the client.
 `TerminationOutcome` has two values:
 
 - `Terminated`: the framework destroyed the key and pruned the index.
-- `Held`: the retention extraction failed after the retry limit. The framework keeps the key for an
-  audited re-drive.
+- `Held`: the retention extraction failed after the retry limit, or a step failed and the framework
+  parked the instance. The framework keeps the key. A retention hold waits for an audited re-drive. A
+  parked instance waits for an intentional termination.
 
 ## `StepContext`
 

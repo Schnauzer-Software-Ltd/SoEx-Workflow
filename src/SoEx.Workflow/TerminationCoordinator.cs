@@ -90,7 +90,8 @@ public sealed class TerminationCoordinator(
         }
     }
 
-    /// <summary>The audited human override: re-drive a held instance back into <c>OnRetaining</c>.</summary>
+    /// <summary>The audited human override: re-drive a retention hold back into <c>OnRetaining</c>. On a park this
+    /// is a deliberate termination: it runs <c>OnRetaining</c> and then shreds.</summary>
     public Task<TerminationOutcome> ReDriveAsync(string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey)
         => TerminateAsync(instanceId, contracts, idempotencyKey, TerminationTrigger.ErasureRequest);
 
@@ -98,8 +99,9 @@ public sealed class TerminationCoordinator(
     /// Park a <b>failing</b> (not completing) instance instead of terminating it — the step-failure analogue of
     /// the retention-obligation hold. The key is <b>retained</b>, the instance is recorded held with the
     /// scrubbed failure, and <c>OnRetentionHeld</c> fires. No crypto-shred runs, so a transient step failure can
-    /// never destroy the sealed journal; recovery is a re-drive (resume) or a deliberate terminate (which then
-    /// shreds). Idempotent: if the instance already terminated (completed/erased) its key is gone, so there is
+    /// never destroy the sealed journal. The entry is recorded as <see cref="HeldKind.Parked"/>: no runtime can
+    /// resume a parked run, so the maintenance re-drive skips it, and recovery is a deliberate termination (which
+    /// then shreds). Idempotent: if the instance already terminated (completed/erased) its key is gone, so there is
     /// nothing to park and any stale held entry is cleared.
     /// </summary>
     public async Task<TerminationOutcome> QuarantineAsync(
@@ -113,7 +115,8 @@ public sealed class TerminationCoordinator(
 
         // Record the hold first, as on the termination path: a hook that throws cannot lose it.
         string safeError = SafeHeldError(instanceId, error);
-        heldRegistry?.Record(new HeldInstance(instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError));
+        heldRegistry?.Record(new HeldInstance(
+            instanceId, idempotencyKey, attempts, DateTimeOffset.UtcNow, safeError, HeldKind.Parked));
         metrics?.ShredHeld();
         await contracts.OnRetentionHeld(new RetentionHeldContext(instanceId, attempts, safeError));
         return TerminationOutcome.Held;

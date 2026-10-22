@@ -64,7 +64,8 @@ public abstract record WorkflowAction
     /// The flow's own ambient context travels onto the continuation in every case — event data carries none of
     /// its own, and a subject learned from it is enrolled through <see cref="WorkflowAction.Subjects"/>. A step
     /// operation that declares no second parameter but is raised at with data fails loudly rather than dropping
-    /// it: the instance parks with its key retained, to be re-driven once the component can receive the data.
+    /// it: the instance parks with its key retained. A parked instance cannot be resumed, so it stays held until
+    /// a deliberate termination.
     /// </para>
     /// <para>
     /// Branch order is significant: it is the tie-break when more than one of the wait's events is

@@ -26,7 +26,7 @@ public sealed record WorkflowMaintenanceOptions
     public TimeSpan SweepOlderThan { get; init; } = TimeSpan.FromDays(1);
 
     public bool ReDriveHeld { get; init; } = true;
-    /// <summary>How often to re-drive quarantined (held) instances.</summary>
+    /// <summary>How often to re-drive retention holds. Parked step failures are skipped.</summary>
     public TimeSpan HeldReDriveInterval { get; init; } = TimeSpan.FromMinutes(5);
 
     public bool ReviewDeadlines { get; init; } = true;

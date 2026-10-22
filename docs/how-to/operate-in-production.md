@@ -44,7 +44,8 @@ The names of the instruments are a stable contract. You can build dashboards on 
   maintenance runner is too slow or has stopped.
 - **Held count.** If `shreds{outcome=held}` or `sweep.instances{state=held}` increases, instances go to
   held state and do not complete their erasure. Each held instance keeps its key. Each one needs an
-  audited re-drive.
+  operator: a retention hold needs an audited re-drive, and a parked instance needs an intentional
+  termination.
 - **Unresolved sweeps.** `sweep.instances{state=unresolved}` counts aged instances that your resolver
   could not map to a target. Their keys stay until you resolve them. Investigate each one.
 - **Step failure rate.** A sustained `steps.failed` rate shows a poison step that retries, or a
@@ -69,13 +70,19 @@ These alerts find a backstop that stopped without a report, for example when its
 
 ## Recover a held instance
 
-A held instance keeps its key. The held registry records it. You can recover it.
+A held instance keeps its key. The held registry records it, and `HeldInstance.Kind` tells you which
+kind of hold it is.
 
 1. Enumerate the held registry.
 2. Investigate the recorded failure reason. The reason contains no subject.
-3. Re-drive the instance through the termination coordinator with `ReDriveAsync`.
-
-`ReDriveAsync` runs the retention extraction again. If the extraction succeeds, it completes the shred.
+3. For a `HeldKind.RetentionHold`, re-drive the instance through the termination coordinator with
+   `ReDriveAsync`. `ReDriveAsync` runs the retention extraction again. If the extraction succeeds, it
+   completes the shred. The held re-drive pass does this step for you on its schedule.
+4. For a `HeldKind.Parked`, the framework cannot resume the instance. When you have the data that you
+   need from it, terminate it intentionally, for example with an erasure request. The termination runs
+   the retention extraction and then shreds the instance. The held re-drive pass skips parked
+   instances. The abandoned-instance sweep terminates a parked instance when it is older than
+   `olderThan`.
 
 The same procedure repairs a crash between `Destroy` and the prune of the index. The termination runs
 again, finds that the key is already gone, and prunes the dangling edge again.

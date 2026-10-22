@@ -146,7 +146,9 @@ public sealed class ErasureCoordinator(
     }
 
     /// <summary>The result of a held-instance re-drive pass.</summary>
-    public sealed record ReDriveReport(IReadOnlyList<InstanceErasureOutcome> Outcomes)
+    /// <param name="Outcomes">One per retention hold the pass tried.</param>
+    /// <param name="Parked">Parks the pass skipped; they keep their keys until a deliberate termination.</param>
+    public sealed record ReDriveReport(IReadOnlyList<InstanceErasureOutcome> Outcomes, int Parked = 0)
     {
         /// <summary>Held instances that re-drove to a clean termination this pass.</summary>
         public int ReDriven => Outcomes.Count(o => o.State == ErasureState.Complete);
@@ -166,9 +168,11 @@ public sealed class ErasureCoordinator(
     }
 
     /// <summary>
-    /// Re-drives every quarantined instance in the held log: an audited retry of its termination extraction.
+    /// Re-drives every retention hold in the held log: an audited retry of its termination extraction.
     /// One left unresolved (no target) keeps its key for a later pass; one that re-drives to a clean termination
-    /// is cleared from the log (by the <see cref="TerminationCoordinator"/>). Requires a held log.
+    /// is cleared from the log (by the <see cref="TerminationCoordinator"/>). A park (<see cref="HeldKind.Parked"/>)
+    /// is skipped and counted in <see cref="ReDriveReport.Parked"/>: no runtime can resume a parked run, and a
+    /// re-drive would shred the journal the park kept. Requires a held log.
     /// </summary>
     public async Task<ReDriveReport> ReDriveHeldAsync(Func<string, ErasureTarget?> resolve)
     {
@@ -179,8 +183,15 @@ public sealed class ErasureCoordinator(
         }
 
         var outcomes = new List<InstanceErasureOutcome>();
+        int parked = 0;
         foreach (HeldInstance held in heldRegistry.Held())
         {
+            if (held.Kind == HeldKind.Parked)
+            {
+                parked++;
+                continue;
+            }
+
             if (resolve(held.InstanceId) is not { } target)
             {
                 outcomes.Add(new InstanceErasureOutcome(held.InstanceId, ErasureAction.ForceTerminate, ErasureState.Held));
@@ -195,7 +206,7 @@ public sealed class ErasureCoordinator(
             outcomes.Add(new InstanceErasureOutcome(held.InstanceId, ErasureAction.ForceTerminate, state));
         }
 
-        return new ReDriveReport(outcomes);
+        return new ReDriveReport(outcomes, parked);
     }
 
     /// <summary>

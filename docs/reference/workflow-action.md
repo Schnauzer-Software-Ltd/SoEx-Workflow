@@ -101,8 +101,8 @@ These rules apply:
   step, the framework refuses the payload. The error message names both types.
 - **Declare the parameter before you raise data at an operation.** If the operation has no second
   parameter, the raise fails. The instance parks and the framework keeps its key. The continuation does not
-  run. After the component declares the parameter, re-drive the instance. In this one case, data on an
-  existing raise changes the behavior of a flow that is in flight.
+  run, and the framework cannot resume the instance. In this one case, data on an existing raise changes
+  the behavior of a flow that is in flight.
 
 Event data has no ambient context. The subject context of the flow travels on the continuation from the
 seed. To enroll a subject that the raise tells you about, use `Subjects`. The event data does not enroll a

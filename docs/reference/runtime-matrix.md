@@ -186,8 +186,8 @@ The failure path and the erasure path are different paths:
 2. When the attempts are used, or when the failure is terminal, the framework **parks** the instance.
 3. A parked instance keeps its key. The framework records the key in the held registry and fires
    `OnRetentionHeld`. It does *not* crypto-shred the instance.
-4. To recover a parked instance, do an audited re-drive (resume). Alternatively, terminate it
-   intentionally. The termination then shreds it.
+4. The framework cannot resume a parked instance. The held registry records it as `HeldKind.Parked`,
+   and the held re-drive skips it. To end it, terminate it intentionally. The termination then shreds it.
 
 The framework destroys the key only on an intentional termination. An intentional termination is a
 natural completion, or an erasure or force-terminate through the coordinator. The failure path never

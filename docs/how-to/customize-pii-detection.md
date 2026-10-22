@@ -8,7 +8,8 @@ The journal keeps some values in clear text. A guard scans these values for subj
 - the instance id
 - the event name of each branch of a portable wait, and the event name of a raise through the workflow
   utility
-- the raise id, if the gateway has a `GatewaySealGuard`
+- the raise id of a raise through the workflow utility, and the raise id at a gateway that has a
+  `GatewaySealGuard`
 - the workflow result, and a native business result
 - the exception text that the journal or the held log keeps for a failed step
 

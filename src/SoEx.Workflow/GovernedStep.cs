@@ -449,9 +449,9 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
             // Fail loud rather than drop it. The raiser supplied data this flow has nowhere to put, and
             // running the continuation without it would be indistinguishable from success — the instance
             // would carry on having silently ignored the only thing the raise was for. The driver's catch
-            // parks the instance with its key retained, so an operator re-drives it once the component
-            // declares the parameter. Type and operation names only: the data itself is the plaintext the
-            // seal exists to keep out of a journal.
+            // parks the instance with its key retained; it cannot be resumed, so an operator terminates it.
+            // Type and operation names only: the data itself is the plaintext the seal exists to keep out of
+            // a journal.
             throw new InvalidOperationException(
                 $"'{OperationName}' was raised at with event data but declares only its step parameter — give it a second parameter to receive the data, or raise the event bare");
         }
