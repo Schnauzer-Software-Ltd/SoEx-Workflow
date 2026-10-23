@@ -87,6 +87,39 @@ kind of hold it is.
 The same procedure repairs a crash between `Destroy` and the prune of the index. The termination runs
 again, finds that the key is already gone, and prunes the dangling edge again.
 
+### Upgrade to a version that records the kind of hold
+
+A version before `HeldInstance.Kind` records every held instance without a kind, and each of these
+entries reads as a `HeldKind.RetentionHold`. A parked instance from such a version is not marked as a
+park. The held re-drive pass re-drives it, and the re-drive shreds it. The fix covers only the parks
+that the new version records.
+
+This also applies to a rolling upgrade. While a node of the old version runs, each park that it records
+has no kind.
+
+Do these steps:
+
+1. Before the upgrade, set `WorkflowMaintenanceOptions.ReDriveHeld` to `false` on all nodes. If your own
+   scheduler calls `ReDriveHeldAsync`, stop those calls. Keep the re-drive off until step 5.
+2. If you use the EF Core held registry, add the `Kind` column before you start a node of the new
+   version. See [packages](../reference/packages.md).
+3. Upgrade all nodes.
+4. Enumerate the held registry. For each entry that was recorded before the last node of the old
+   version stopped, get the status of that instance from its runtime. A parked instance has failed in
+   its runtime: the step failure is rethrown after the park. A retention hold has not failed. Its
+   termination came from a completion or an erasure request. For each parked instance, decide what to
+   do now. When you have the data that you need from it, terminate it intentionally. If it must stay,
+   keep step 5 for later.
+5. Set `ReDriveHeld` to `true` again, or start your scheduler's calls again. From this point, the re-drive shreds each remaining entry that has
+   no kind.
+
+The abandoned-instance sweep does not use the kind. It terminates each instance that is older than
+`SweepOlderThan`, and this includes parked instances. If you must keep a parked instance during the
+upgrade, make sure that the sweep does not reach it.
+
+Restate and Zeebe do not write a failed step to the held registry, so this procedure does not apply to
+them. See the failure rows in the [runtime matrix](../reference/runtime-matrix.md).
+
 ## Validate configuration at start
 
 1. Remove all dev defaults before you ship.
