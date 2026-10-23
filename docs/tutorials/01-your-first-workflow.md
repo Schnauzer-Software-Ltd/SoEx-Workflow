@@ -44,8 +44,8 @@ dotnet add package SoEx.Transport.InProc --prerelease
 
 The base-SoEx packages are pre-release packages, so `--prerelease` is mandatory. Without it,
 `dotnet add package` reports "no stable versions available". This repo builds with version
-`0.0.0-alpha-4.1.2`. If `--prerelease` selects a different version, pin the correct version with
-`--version 0.0.0-alpha-4.1.2`.
+`0.0.0-alpha-4.2`. If `--prerelease` selects a different version, pin the correct version with
+`--version 0.0.0-alpha-4.2`.
 
 All the code in this tutorial goes in `Program.cs`. Replace the contents of that file as you go.
 

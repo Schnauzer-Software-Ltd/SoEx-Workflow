@@ -91,7 +91,7 @@ Read these limits before you build a deployment on SoEx.Workflow. They are discl
   reference at a pinned commit. Run the attestation again locally before you deploy. Packaging and a CI publish leg
   are planned future work.
 - **The substrate is a pinned prerelease.** The base SoEx packages are pinned to one exact prerelease,
-  `0.0.0-alpha-4.1.2`. There is no compatibility policy. Until a stable line exists, treat each substrate
+  `0.0.0-alpha-4.2`. There is no compatibility policy. Until a stable line exists, treat each substrate
   update as a breaking change. Rebuild and run the attestation again against it.
 - **The governance stores create their schema with `EnsureCreated()`.** The EF Core subject index and
   maintenance stores build their schema on first use. They have no migrations. Thus there is no defined
