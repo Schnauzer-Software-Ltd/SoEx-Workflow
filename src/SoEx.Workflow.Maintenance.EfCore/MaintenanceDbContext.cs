@@ -42,9 +42,17 @@ public sealed class PendingEntity
     public string InstanceIds { get; set; } = "";
 }
 
+/// <summary>An instance lease row (keyed on <see cref="InstanceId"/>).</summary>
+public sealed class LeaseEntity
+{
+    public string InstanceId { get; set; } = "";
+    public DateTimeOffset RenewedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+}
+
 /// <summary>
-/// The EF Core context backing the durable maintenance logs: a held-instance table, an open-request table, and
-/// the async front door's pending-request table. Core mapping only (no relational <c>ToTable</c>) so the package
+/// The EF Core context backing the durable maintenance logs: a held-instance table, an open-request table,
+/// the async front door's pending-request table, and the instance-lease table. Core mapping only (no relational <c>ToTable</c>) so the package
 /// stays provider-agnostic; the consumer configures the database provider via <see cref="DbContextOptions{TContext}"/>.
 /// </summary>
 public sealed class MaintenanceDbContext(DbContextOptions<MaintenanceDbContext> options) : DbContext(options)
@@ -52,11 +60,12 @@ public sealed class MaintenanceDbContext(DbContextOptions<MaintenanceDbContext> 
     public DbSet<HeldEntity> Held => Set<HeldEntity>();
     public DbSet<RequestEntity> Requests => Set<RequestEntity>();
     public DbSet<PendingEntity> Pending => Set<PendingEntity>();
+    public DbSet<LeaseEntity> Leases => Set<LeaseEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) => ConfigureModel(modelBuilder);
 
     /// <summary>
-    /// Maps the held-instance, open-request, and pending-request entities. Exposed as a static so a combined
+    /// Maps the held-instance, open-request, pending-request, and instance-lease entities. Exposed as a static so a combined
     /// context that backs the maintenance logs and the subject index from one database (the bundled
     /// <c>ErasureStores</c>) can apply this same mapping alongside the subject-index mapping.
     /// </summary>
@@ -66,5 +75,6 @@ public sealed class MaintenanceDbContext(DbContextOptions<MaintenanceDbContext> 
         modelBuilder.Entity<RequestEntity>().HasKey(e => e.RequestId);
         modelBuilder.Entity<RequestEntity>().Property(e => e.Version).IsConcurrencyToken();
         modelBuilder.Entity<PendingEntity>().HasKey(e => e.RequestId);
+        modelBuilder.Entity<LeaseEntity>().HasKey(e => e.InstanceId);
     }
 }

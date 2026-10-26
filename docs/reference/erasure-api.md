@@ -20,14 +20,15 @@ public ErasureCoordinator(
     TimeProvider? time = null,
     IHeldInstanceRegistry? heldRegistry = null,
     IErasureRequestRegistry? requestRegistry = null,
-    WorkflowMetrics? metrics = null);
+    WorkflowMetrics? metrics = null,
+    IInstanceLeaseRegistry? leases = null);
 ```
 
 | Member | Description |
 |---|---|
 | `Task<ErasureResult> EraseAsync(ErasureRequest request, Func<string, ErasureTarget?> resolve)` | Runs a request from start to end. It finds the instances in the index and makes a decision for each instance. It drives each termination to crypto-shred or to quarantine. Then it makes a report. `resolve` maps an instance id to its `ErasureTarget`. It returns `null` if it cannot resolve the id. |
 | `Task<ErasureResult> EraseInstancesAsync(ErasureRequest request, IReadOnlyList<string> instanceIds, Func<string, ErasureTarget?> resolve)` | Erases a set of instance ids that is already resolved. The drain uses it. It makes the same decision for each instance as `EraseAsync`, and it records the open request in the same way. |
-| `Task<SweepReport> SweepAsync(TimeSpan olderThan, Func<string, ErasureTarget?> resolve, int? maxInstances = null, CancellationToken cancellationToken = default)` | The backstop that works without a request. It force-terminates each live instance with a key that is older than `olderThan`. `maxInstances` limits the number of aged instances in one pass. The next pass gets the remainder. `null` sets no limit. Requires an `IEnumerableInstanceKeyStore`. |
+| `Task<SweepReport> SweepAsync(TimeSpan olderThan, Func<string, ErasureTarget?> resolve, int? maxInstances = null, CancellationToken cancellationToken = default)` | The backstop that works without a request. It force-terminates each live instance that has expired. An instance with a lease in `leases` expires when its lease ends. An instance with no lease expires when its key is older than `olderThan`. It also removes each lease that has no key. `maxInstances` limits the number of expired instances in one pass. The next pass gets the remainder. `null` sets no limit. Requires an `IEnumerableInstanceKeyStore`. |
 | `Task<ReDriveReport> ReDriveHeldAsync(Func<string, ErasureTarget?> resolve)` | One pass over the retention holds. It tries their extraction again. It skips parked instances (`HeldKind.Parked`), because the framework cannot resume them, and counts them in `ReDriveReport.Parked`. Requires an `IHeldInstanceRegistry`. |
 | `Task<DeadlineReviewReport> ReviewDeadlinesAsync(TimeSpan escalateWithin, Func<string, ErasureTarget?> resolve, Func<DeadlineEscalation, Task>? onEscalate = null)` | One pass over the open requests with a statutory window that closes soon. It force-terminates each instance that would breach the deadline. Requires an `IErasureRequestRegistry` and an `IEnumerableInstanceKeyStore`. |
 
@@ -53,7 +54,7 @@ public sealed record ErasureResult(
     ErasureReport Report,
     IReadOnlyList<InstanceErasureOutcome> Outcomes);
 
-public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes)
+public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes, int LeasesPruned = 0)
 {
     public int Swept { get; }   // Outcomes where State == Complete
     public int Held  { get; }   // Outcomes where State == Held
@@ -61,6 +62,7 @@ public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes)
 ```
 
 - `ErasureRequest.ReceivedAt` is the start time of the statutory clock.
+- `SweepReport.LeasesPruned` is the number of leases that the pass removed because their instance has no key.
 - `ErasureAction` has two values:
   - `CompleteNaturally`: the instance is bounded and erases itself before the deadline.
   - `ForceTerminate`.
@@ -78,7 +80,7 @@ public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes)
 | `StatutoryDeadlineClock` | `(IDeadlinePolicy? policy = null, TimeSpan? escalateWithin = null, TimeProvider? time = null)`. If `policy` is null, the clock uses a conservative default window. |
 | `ErasurePlanner` | `(TimeProvider? time = null)` |
 | `ErasureReporter` | `()` |
-| `TerminationCoordinator` | `(IInstanceKeyStore keys, ISubjectIndex index, int maxRetainingAttempts = 3, Func<int, Task>? backoffDelay = null, IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null, WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null)` |
+| `TerminationCoordinator` | `(IInstanceKeyStore keys, ISubjectIndex index, int maxRetainingAttempts = 3, Func<int, Task>? backoffDelay = null, IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null, WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null, IInstanceLeaseRegistry? leases = null)`. With `leases`, a termination removes the lease of the instance immediately before it destroys the key. |
 
 ## `ErasureSweepLoop`
 
@@ -99,8 +101,10 @@ public Task RunAsync(
     CancellationToken cancellation = default);
 ```
 
-> `olderThan` is an age limit only. The sweep does not examine if an instance is live. Set `olderThan` to
-> a value that is longer than your longest valid flow.
+> `olderThan` applies only to an instance with no lease. For such an instance, it is an age limit only. The
+> sweep does not examine if the instance is live. Give your instances
+> [leases](../how-to/run-erasure-maintenance.md#give-each-instance-a-lease), or set `olderThan` to a value
+> that is longer than your longest valid flow.
 
 ## Maintenance runner
 

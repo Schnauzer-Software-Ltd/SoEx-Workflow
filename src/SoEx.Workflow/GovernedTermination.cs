@@ -25,7 +25,8 @@ public sealed class GovernedTermination
 
     public GovernedTermination(
         IErasureEvent? contracts, IInstanceKeyStore keys, ISubjectIndex index,
-        IHeldInstanceRegistry? heldRegistry = null, WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null)
+        IHeldInstanceRegistry? heldRegistry = null, WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null,
+        IInstanceLeaseRegistry? leases = null)
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(index);
@@ -34,7 +35,9 @@ public sealed class GovernedTermination
         // heldRegistry lets the maintenance backstop find and re-drive a hold that happened on the natural
         // termination path (not just the erasure/sweep path); null = no held-instance tracking (back-compat).
         // tombstone (when wired) makes an erasure final — a re-mint after the shred is refused at the sealer.
-        _termination = new TerminationCoordinator(keys, index, heldRegistry: heldRegistry, metrics: metrics, tombstone: tombstone);
+        // leases (when wired) is the registry the governed steps renew; termination forgets the instance's lease.
+        _termination = new TerminationCoordinator(
+            keys, index, heldRegistry: heldRegistry, metrics: metrics, tombstone: tombstone, leases: leases);
     }
 
     public Task<TerminationOutcome> TerminateAsync(string instanceId, IdempotencyKey key, TerminationTrigger trigger) =>

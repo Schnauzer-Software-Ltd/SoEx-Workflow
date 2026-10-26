@@ -8,7 +8,8 @@ namespace SoEx.Workflow.Maintenance.RavenDB;
 /// RavenDB <see cref="IDocumentStore"/> — the two stores erasure routing always needs together, so a deployment
 /// points one document store at both instead of running two. The interfaces stay separate: this hands out an
 /// <see cref="ISubjectIndex"/>, an <see cref="IHeldInstanceRegistry"/>, and an
-/// <see cref="IErasureRequestRegistry"/>/<see cref="IPendingErasureRequests"/>, so a consumer that wants real
+/// <see cref="IErasureRequestRegistry"/>/<see cref="IPendingErasureRequests"/>, and an
+/// <see cref="IInstanceLeaseRegistry"/>, so a consumer that wants real
 /// separation can ignore this and construct the per-interface stores over their own document stores instead.
 /// <para>
 /// The RavenDB stores already isolate themselves by id/compare-exchange-key prefix, so sharing one document store
@@ -31,6 +32,7 @@ public sealed class RavenErasureStores
         SubjectIndex = new RavenDbSubjectIndex(store, protector, keys, prefix + "subjidx/");
         HeldInstances = new RavenDbHeldInstanceRegistry(store, prefix + "maint/");
         ErasureRequests = new RavenDbErasureRequestRegistry(store, protector, prefix + "maint/");
+        Leases = new RavenDbInstanceLeaseRegistry(store, prefix + "maint/");
     }
 
     /// <summary>The durable subject→instance index, backed by the shared document store.</summary>
@@ -43,4 +45,8 @@ public sealed class RavenErasureStores
     /// <see cref="IErasureRequestRegistry"/> (the open-request log) and <see cref="IPendingErasureRequests"/>
     /// (the async front door's intake) — one store, two faces.</summary>
     public RavenDbErasureRequestRegistry ErasureRequests { get; }
+
+    /// <summary>The durable instance-lease registry, backed by the shared document store. Wire the same one into
+    /// the governed steps (which renew) and the sweep (which reads).</summary>
+    public IInstanceLeaseRegistry Leases { get; }
 }

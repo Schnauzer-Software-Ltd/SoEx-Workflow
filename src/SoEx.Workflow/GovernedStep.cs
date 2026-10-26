@@ -9,7 +9,16 @@ namespace SoEx.Workflow;
 /// per-step sequence (both come from the backend's own context — e.g. a Temporal workflow id
 /// plus a workflow-owned counter), and the flowed ambient bytes (carrying the <see cref="SubjectContext"/> entry) for the step.
 /// </summary>
-public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null);
+public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null)
+{
+    /// <summary>
+    /// How long the instance may stay idle after this step completes before the abandoned-instance sweep may
+    /// shred it. Set it on the step before a long native wait: the framework cannot see that wait, so it cannot
+    /// derive the lease from it. Null = the binding's <see cref="InstanceLeaseOptions.Idle"/>. Used only when a
+    /// lease registry is wired.
+    /// </summary>
+    public TimeSpan? Lease { get; init; }
+}
 
 /// <summary>
 /// The non-generic facet of <see cref="GovernedStep{I}"/> the per-backend drivers depend on. None of
@@ -140,12 +149,16 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
     private readonly Type? _eventDataType;
     private readonly bool _clearJournalResult;
     private readonly WorkflowMetrics? _metrics;
+    private readonly IInstanceLeaseRegistry? _leases;
+    private readonly InstanceLeaseOptions _leaseOptions;
+    private readonly TimeProvider _time;
 
     public GovernedStep(
         IWorkflowDispatch endpoint, IMessageSerializer serializer,
         IIdempotencyStore? idempotency, IInstanceKeyStore keys, ISubjectIndex index,
         string? operationName = null, ISubjectMatcher? subjectMatcher = null, bool clearJournalResult = false,
-        WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null)
+        WorkflowMetrics? metrics = null, IErasureTombstone? tombstone = null,
+        IInstanceLeaseRegistry? leases = null, InstanceLeaseOptions? leaseOptions = null, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(index);
@@ -165,6 +178,9 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         _matcher = subjectMatcher ?? SubstringSubjectMatcher.Default;
         _clearJournalResult = clearJournalResult;
         _metrics = metrics;
+        _leases = leases;
+        _leaseOptions = leaseOptions ?? InstanceLeaseOptions.Default;
+        _time = time ?? TimeProvider.System;
     }
 
     // The governed operation: the contract's sole method by default, or — for a multi-operation
@@ -371,9 +387,16 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         (TResult)(await ExecuteAsync(ctx, stepDto, sealedEventData))!;
 
     /// <summary>Runs a typed step and returns its business result as an object.</summary>
-    public Task<object?> ExecuteAsync(StepContext ctx, object stepDto, byte[]? sealedEventData = null) =>
-        DispatchGovernedAsync(
-            SealStep(ctx.InstanceId, stepDto, ctx.AmbientContext), sealedEventData, ctx.InstanceId, ctx.Sequence);
+    public Task<object?> ExecuteAsync(StepContext ctx, object stepDto, byte[]? sealedEventData = null)
+    {
+        if (ctx.Lease is { } lease && lease <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ctx), lease, "a step's lease must be a positive period");
+        }
+
+        return DispatchGovernedAsync(
+            SealStep(ctx.InstanceId, stepDto, ctx.AmbientContext), sealedEventData, ctx.InstanceId, ctx.Sequence, ctx.Lease);
+    }
 
     /// <summary>
     /// Unseal under the instance key, govern (key mint + subject indexing) then dispatch, returning the
@@ -384,12 +407,17 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
         DispatchGovernedAsync(sealedEnvelope, null, instanceId, sequence);
 
     /// <summary>Unseal, merge any raise-time event data, govern, then dispatch. See the interface member.</summary>
-    public async Task<object?> DispatchGovernedAsync(
-        byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence)
+    public Task<object?> DispatchGovernedAsync(
+        byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence) =>
+        DispatchGovernedAsync(sealedEnvelope, sealedEventData, instanceId, sequence, declaredLease: null);
+
+    private async Task<object?> DispatchGovernedAsync(
+        byte[] sealedEnvelope, byte[]? sealedEventData, string instanceId, long sequence, TimeSpan? declaredLease)
     {
         try
         {
             object? result = await DispatchGovernedCoreAsync(sealedEnvelope, sealedEventData, instanceId, sequence);
+            RenewLease(instanceId, result, declaredLease);
             _metrics?.StepExecuted();
             return result;
         }
@@ -428,6 +456,24 @@ public sealed class GovernedStep<I> : IGovernedStep where I : class
                 return _keys.Encrypt(instanceId, Serializer.Serialize(result));
             });
         return Serializer.Deserialize<object>(_keys.Decrypt(instanceId, sealedResult));
+    }
+
+    // Renews the instance's lease once the step has COMPLETED, never before it runs: a step that fails in a retry
+    // loop must not keep an abandoned instance alive. The lease also depends on what the step returned (a portable
+    // wait's timeout), which is only known now. This runs inside the governed dispatch, which every adapter runs as
+    // the step itself (an activity, a job, a journaled call) and never on orchestration replay, so a late replay
+    // cannot extend the lease. A redelivered step that the idempotency store collapses renews again, which only
+    // restates the lease it already wrote. A store failure fails the step, which the runtime retries.
+    private void RenewLease(string instanceId, object? result, TimeSpan? declaredLease)
+    {
+        if (_leases is null || _leaseOptions.LeaseAfter(result, declaredLease) is not { } lease)
+        {
+            return;
+        }
+
+        DateTimeOffset now = _time.GetUtcNow();
+        DateTimeOffset expiresAt = lease > DateTimeOffset.MaxValue - now ? DateTimeOffset.MaxValue : now + lease;
+        _leases.Renew(new InstanceLease(instanceId, now, expiresAt));
     }
 
     // Folds raise-time event data into the step envelope BEFORE anything reads it, so metadata extraction,

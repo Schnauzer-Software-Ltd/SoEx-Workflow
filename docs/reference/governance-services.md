@@ -3,7 +3,7 @@
 
 # Reference: governance services
 
-Three services support the governance of each step and of the termination. They work the same on each
+These services support the governance of each step and of the termination. They work the same on each
 runtime. [`GovernedStep`/`GovernedTermination`](governed-core.md) connects them to each runtime.
 Namespaces: `SoEx.Workflow`, `SoEx.Workflow.Runtime.InMemory`. To use durable implementations, see
 [Make crypto-shred durable](../how-to/make-crypto-shred-durable.md).
@@ -81,6 +81,34 @@ You always wire the durable index and the erasure-maintenance logs together. Thu
 bundle: `ErasureStores` (EF Core) and `RavenErasureStores` (RavenDB). A bundle puts the index and the
 maintenance registries in one store, and the interfaces stay separate. See
 [Back the index and maintenance from one store](../how-to/make-crypto-shred-durable.md#optional-back-the-index-and-maintenance-from-one-store).
+
+## `IInstanceLeaseRegistry` (optional)
+
+`IInstanceLeaseRegistry` holds one `InstanceLease` for each leased instance. `GovernedStep` renews the
+lease after each completed step. `GovernedTermination` removes it. The
+[abandoned-instance sweep](erasure-api.md#erasurecoordinator) reads it to find the instances whose lease
+ended. See [Give each instance a lease](../how-to/run-erasure-maintenance.md#give-each-instance-a-lease).
+
+```csharp
+public readonly record struct InstanceLease(string InstanceId, DateTimeOffset RenewedAt, DateTimeOffset ExpiresAt);
+```
+
+| Member | Description |
+|---|---|
+| `Renew(InstanceLease lease)` | Records the lease, or replaces the lease of that instance. The last write wins. |
+| `Forget(string instanceId)` | Removes the lease of an instance (idempotent). |
+| `Leases()` | Returns all the leases. |
+
+The step workers write the leases and the sweep reads them. If these run in different processes, use a
+durable implementation that all of them share.
+
+| Implementation | Package |
+|---|---|
+| `InMemoryInstanceLeaseRegistry` | `SoEx.Workflow` |
+| `RavenDbInstanceLeaseRegistry` | `SoEx.Workflow.Maintenance.RavenDB` (compare-exchange). Also the `Leases` face of `RavenErasureStores`. |
+| `EfCoreInstanceLeaseRegistry` | `SoEx.Workflow.Maintenance.EfCore` (a `Leases` table). Also the `Leases` face of `ErasureStores`. |
+
+A lease row holds the instance id and two times. It holds no subject.
 
 ## `IIdempotencyStore` (optional)
 

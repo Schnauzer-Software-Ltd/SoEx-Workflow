@@ -22,7 +22,8 @@ public sealed record WorkflowMaintenanceOptions
     public bool Sweep { get; init; } = true;
     /// <summary>How often to sweep abandoned instances.</summary>
     public TimeSpan SweepInterval { get; init; } = TimeSpan.FromMinutes(15);
-    /// <summary>Minimum age before an un-terminated instance is swept — must exceed the longest legitimate flow.</summary>
+    /// <summary>Minimum age before an un-terminated instance <b>with no lease</b> is swept — must exceed the longest
+    /// legitimate unleased flow. An instance with a lease is swept when its lease runs out instead.</summary>
     public TimeSpan SweepOlderThan { get; init; } = TimeSpan.FromDays(1);
 
     public bool ReDriveHeld { get; init; } = true;

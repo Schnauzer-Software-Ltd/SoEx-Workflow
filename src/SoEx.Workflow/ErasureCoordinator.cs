@@ -16,11 +16,13 @@ public sealed record ErasureTarget(
 public sealed record InstanceErasureOutcome(string InstanceId, ErasureAction Action, ErasureState State);
 
 /// <summary>
-/// The result of one abandoned-instance sweep: the per-instance outcomes for the aged
-/// instances it drove (instances still within their age window are not listed — they were
+/// The result of one abandoned-instance sweep: the per-instance outcomes for the expired
+/// instances it drove (instances still within their lease or age window are not listed — they were
 /// left untouched).
 /// </summary>
-public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes)
+/// <param name="Outcomes">One per expired instance the pass drove.</param>
+/// <param name="LeasesPruned">Leases the pass removed because their instance no longer has a key.</param>
+public sealed record SweepReport(IReadOnlyList<InstanceErasureOutcome> Outcomes, int LeasesPruned = 0)
 {
     /// <summary>Aged instances crypto-shredded and pruned this pass.</summary>
     public int Swept => Outcomes.Count(o => o.State == ErasureState.Complete);
@@ -58,7 +60,8 @@ public sealed class ErasureCoordinator(
     TimeProvider? time = null,
     IHeldInstanceRegistry? heldRegistry = null,
     IErasureRequestRegistry? requestRegistry = null,
-    WorkflowMetrics? metrics = null)
+    WorkflowMetrics? metrics = null,
+    IInstanceLeaseRegistry? leases = null)
 {
     /// <param name="request">The erasure request (its <c>ReceivedAt</c> anchors the legal clock).</param>
     /// <param name="resolve">
@@ -277,32 +280,41 @@ public sealed class ErasureCoordinator(
     /// <summary>
     /// The abandoned-instance backstop. Where <see cref="EraseAsync"/> is driven by a subject's
     /// request and reaches instances through the subject index, this enumerates the live
-    /// (un-terminated) instances the key store still holds and force-terminates every one whose
-    /// key was minted longer than <paramref name="olderThan"/> ago — crypto-shredding instances
-    /// that were abandoned before their termination hook ran and would otherwise retain their key
-    /// (and decryptable payload) indefinitely, even though no erasure request ever names them.
+    /// (un-terminated) instances the key store still holds and force-terminates every one that has
+    /// expired — crypto-shredding instances that were abandoned before their termination hook ran and
+    /// would otherwise retain their key (and decryptable payload) indefinitely, even though no erasure
+    /// request ever names them.
     /// <para>
-    /// <paramref name="olderThan"/> is an age threshold, not a liveness probe: it must exceed the
-    /// longest legitimate flow duration, or a still-running instance is mistaken for an abandoned
-    /// one and shredded mid-flight. The framework owns the shred; the consumer owns the cadence
-    /// (schedule this on a timer/cron — see <see cref="ErasureSweepLoop"/>).
+    /// An instance expires when its <see cref="InstanceLease"/> runs out. Each completed governed step renews
+    /// the lease with the idle period that step declared, so a flow in a months-long wait keeps a months-long
+    /// lease while an abandoned short flow expires within its short one. An instance with no lease (no lease
+    /// registry is wired, or no step has completed yet, or it started before leases were wired) expires when its
+    /// key was minted longer than <paramref name="olderThan"/> ago. That fallback is an age threshold, not a
+    /// liveness probe: it must exceed the longest legitimate unleased flow, or a still-running instance is
+    /// mistaken for an abandoned one and shredded mid-flight.
     /// </para>
     /// <para>
-    /// Ages keys against the <see cref="TimeProvider"/> wall-clock (cutoff = now − <paramref name="olderThan"/>),
-    /// so it assumes a <b>monotonically-advancing</b> clock. A sustained backward skew (a large NTP correction,
+    /// The pass also removes a lease whose instance no longer has a key (a step renewed it while the instance
+    /// was being terminated), and reports the count in <see cref="SweepReport.LeasesPruned"/>.
+    /// The framework owns the shred; the consumer owns the cadence (schedule this on a timer/cron — see
+    /// <see cref="ErasureSweepLoop"/>).
+    /// </para>
+    /// <para>
+    /// Compares leases and key ages against the <see cref="TimeProvider"/> wall-clock, so it assumes a
+    /// <b>monotonically-advancing</b> clock. A sustained backward skew (a large NTP correction,
     /// a VM migration) can defer an abandoned instance's shred past where it would otherwise fire — until the
     /// clock recovers or a later erasure request re-drives the still-indexed instance. The termination is
     /// idempotent, so a deferred-then-resumed sweep never double-shreds; the only effect of skew is a delay.
     /// </para>
     /// </summary>
-    /// <param name="olderThan">Minimum age (since key mint) before an un-terminated instance is swept.</param>
+    /// <param name="olderThan">Minimum age (since key mint) before an un-terminated instance <b>with no lease</b> is swept.</param>
     /// <param name="resolve">
     /// Resolves a live instance id to its <see cref="ErasureTarget"/>. An instance the consumer
     /// cannot resolve is reported (<see cref="ErasureState.Requested"/>) and left for a later pass,
     /// never silently dropped — its key survives until it can be resolved and driven.
     /// </param>
     /// <param name="maxInstances">
-    /// Bounds one pass to at most this many aged instances (resolved or unresolved), so a fleet-scale backlog is
+    /// Bounds one pass to at most this many expired instances (resolved or unresolved), so a fleet-scale backlog is
     /// drained over several passes instead of one unbounded pass that could itself become an incident. The
     /// remainder is picked up next pass. Null = no bound (drain everything this pass).
     /// </param>
@@ -317,30 +329,46 @@ public sealed class ErasureCoordinator(
                 "SweepAsync requires an IEnumerableInstanceKeyStore (the live-instance set) to be supplied to the coordinator.");
         }
 
-        DateTimeOffset cutoff = (time ?? TimeProvider.System).GetUtcNow() - olderThan;
+        DateTimeOffset now = (time ?? TimeProvider.System).GetUtcNow();
+        DateTimeOffset cutoff = now - olderThan;
+
+        // Read the leases BEFORE the live set. A step renews only after its key was minted, so every lease in this
+        // snapshot belongs to an instance that already had a key; one missing from the later live set has been
+        // terminated, and its lease can go. Read the other way round, an instance minted between the two reads
+        // would look like an orphan and lose a lease it had just been given.
+        Dictionary<string, InstanceLease> leased = [];
+        foreach (InstanceLease lease in leases?.Leases() ?? [])
+        {
+            leased[lease.InstanceId] = lease;
+        }
+
+        IReadOnlyCollection<LiveInstance> live = liveInstances.LiveInstances();
         var outcomes = new List<InstanceErasureOutcome>();
 
-        foreach (LiveInstance live in liveInstances.LiveInstances())
+        foreach (LiveInstance instance in live)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (live.MintedAt >= cutoff)
+            bool expired = leased.TryGetValue(instance.InstanceId, out InstanceLease lease)
+                ? lease.ExpiresAt < now
+                : instance.MintedAt < cutoff;
+            if (!expired)
             {
-                // still within its legitimate lifetime window — a running flow, not an abandoned one
+                // still within its lease (or, with none, its age window) — a running flow, not an abandoned one
                 continue;
             }
 
             if (maxInstances is { } cap && outcomes.Count >= cap)
             {
-                // bounded batch spent — leave the rest of the aged set for the next pass rather than run the
+                // bounded batch spent — leave the rest of the expired set for the next pass rather than run the
                 // whole backlog (and every synchronous store round-trip it entails) in a single unbounded pass.
                 break;
             }
 
-            if (resolve(live.InstanceId) is not { } target)
+            if (resolve(instance.InstanceId) is not { } target)
             {
                 // unresolved — surfaced, never silently dropped; the key survives for a later pass
-                outcomes.Add(new InstanceErasureOutcome(live.InstanceId, ErasureAction.ForceTerminate, ErasureState.Requested));
+                outcomes.Add(new InstanceErasureOutcome(instance.InstanceId, ErasureAction.ForceTerminate, ErasureState.Requested));
                 metrics?.Swept(ErasureState.Requested);
                 continue;
             }
@@ -348,10 +376,25 @@ public sealed class ErasureCoordinator(
             TerminationOutcome outcome = await termination.TerminateAsync(
                 target.InstanceId, target.Contracts, target.IdempotencyKey, TerminationTrigger.ErasureRequest);
             ErasureState state = outcome == TerminationOutcome.Terminated ? ErasureState.Complete : ErasureState.Held;
-            outcomes.Add(new InstanceErasureOutcome(live.InstanceId, ErasureAction.ForceTerminate, state));
+            outcomes.Add(new InstanceErasureOutcome(instance.InstanceId, ErasureAction.ForceTerminate, state));
             metrics?.Swept(state);
         }
 
-        return new SweepReport(outcomes);
+        // Termination forgets a lease before it destroys the key, so an orphan only appears when a step finished
+        // and renewed while its instance was being terminated. Prune those against the full live set read above
+        // (not the part of it this pass got through).
+        int pruned = 0;
+        if (leases is not null)
+        {
+            HashSet<string> liveIds = [.. live.Select(l => l.InstanceId)];
+            foreach (string orphan in leased.Keys.Where(id => !liveIds.Contains(id)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                leases.Forget(orphan);
+                pruned++;
+            }
+        }
+
+        return new SweepReport(outcomes, pruned);
     }
 }

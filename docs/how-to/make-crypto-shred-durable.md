@@ -144,15 +144,15 @@ stay after a restart. Each process can see them. Thus the shred holds across you
 ## Optional: back the index and maintenance from one store
 
 You always use the subject index and the erasure-maintenance logs together. The maintenance logs are the
-held instances, the open requests, and the [pending intake](run-erasure-maintenance.md) of the async front
-door. Each durable store type ships a bundle that keeps all of them in one store. For EF Core, the store is
+held instances, the open requests, the [pending intake](run-erasure-maintenance.md) of the async front
+door, and the [instance leases](run-erasure-maintenance.md#give-each-instance-a-lease). Each durable store type ships a bundle that keeps all of them in one store. For EF Core, the store is
 one database. For RavenDB, the store is one document store.
 
 1. Create `ErasureStores` (EF Core) or `RavenErasureStores` (RavenDB) with the protector and the key store.
-2. Get the subject index, the held registry, and the request registry from the bundle.
+2. Get the subject index, the held registry, the request registry, and the lease registry from the bundle.
 
 ```csharp
-// EF Core (SoEx.Workflow.Maintenance.EfCore): one database behind the index and all three maintenance faces.
+// EF Core (SoEx.Workflow.Maintenance.EfCore): one database behind the index and all the maintenance faces.
 var stores = new ErasureStores(
     new DbContextOptionsBuilder<ErasureDbContext>().UseSqlite("Data Source=erasure.db").Options,
     protector, keys);
@@ -163,6 +163,7 @@ var stores = new RavenErasureStores(documentStore, protector, keys);
 ISubjectIndex                index    = stores.SubjectIndex;
 IHeldInstanceRegistry        held     = stores.HeldInstances;
 EfCoreErasureRequestRegistry requests = stores.ErasureRequests; // satisfies IErasureRequestRegistry and IPendingErasureRequests
+IInstanceLeaseRegistry       leases   = stores.Leases;
 ```
 
 The bundle is a packaging convenience. The interfaces stay separate. To keep each store on its own

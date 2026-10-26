@@ -16,7 +16,7 @@ public enum TerminationOutcome
 public sealed class TerminationCoordinator(
     IInstanceKeyStore keys, ISubjectIndex index, int maxRetainingAttempts = 3, Func<int, Task>? backoffDelay = null,
     IHeldInstanceRegistry? heldRegistry = null, ISubjectMatcher? matcher = null, WorkflowMetrics? metrics = null,
-    IErasureTombstone? tombstone = null)
+    IErasureTombstone? tombstone = null, IInstanceLeaseRegistry? leases = null)
 {
     public async Task<TerminationOutcome> TerminateAsync(
         string instanceId, IErasureEvent contracts, IdempotencyKey idempotencyKey, TerminationTrigger trigger)
@@ -33,6 +33,7 @@ public sealed class TerminationCoordinator(
             // well — otherwise that edge survives forever and a later erasure reports Complete while the
             // personal-data linkage persists.
             index.RemoveInstance(instanceId);
+            leases?.Forget(instanceId); // and any lease a step renewed after the key was gone.
             heldRegistry?.Clear(instanceId); // it terminated (here or elsewhere) — drop any stale held entry.
             RecordErasureTombstone(instanceId, trigger); // a redelivered erasure still tombstones (idempotent).
             return TerminationOutcome.Terminated;
@@ -69,6 +70,10 @@ public sealed class TerminationCoordinator(
             }
         }
 
+        // Forget the lease BEFORE the key goes. A crash between the two then leaves a live key with no lease, which
+        // the sweep ages by its mint time (the safe direction) and a re-entry finishes. The other order would leave
+        // a lease with no key, which a later generation of the same instance id could inherit.
+        leases?.Forget(instanceId);
         keys.Destroy(instanceId);
         index.RemoveInstance(instanceId);
         await contracts.OnTerminated(new TerminatedContext(instanceId));

@@ -30,7 +30,8 @@ public sealed class WorkflowUtility(
     IHeldInstanceRegistry? heldRegistry = null,
     IErasureRequestRegistry? requestRegistry = null,
     Func<string, IErasureEvent?>? resolveErasureFor = null,
-    IPendingErasureRequests? pending = null)
+    IPendingErasureRequests? pending = null,
+    IInstanceLeaseRegistry? leases = null)
     : SubSystem.IWorkflowUtility, External.IWorkflowUtility
 {
     // ---- SubSystem face: what the manager proxies to -------------------------------------------------
@@ -157,8 +158,8 @@ public sealed class WorkflowUtility(
 
     public async Task<long> SweepAbandonedAsync(long olderThanSeconds)
     {
-        // The request-independent backstop (one pass): age the live key set and force-terminate instances
-        // abandoned before their termination hook ran. The sweep logic is owned here; the host owns the cadence.
+        // The request-independent backstop (one pass): force-terminate the live instances whose lease ran out (or,
+        // with no lease, whose key is older than the threshold) — abandoned before their termination hook ran. The sweep logic is owned here; the host owns the cadence.
         SweepReport report = await Coordinator().SweepAsync(TimeSpan.FromSeconds(olderThanSeconds), Target);
         return report.Outcomes.Count;
     }
@@ -200,9 +201,10 @@ public sealed class WorkflowUtility(
     }
 
     // A fresh coordinator per call — the planner/clock/reporter are stateless; the durable state is the shared
-    // index, key store, and (optional) maintenance logs. SweepAsync needs the enumerable key set.
+    // index, key store, and (optional) maintenance logs and leases. SweepAsync needs the enumerable key set.
     private ErasureCoordinator Coordinator() => new(
         index, new StatutoryDeadlineClock(), new ErasurePlanner(),
-        new TerminationCoordinator(keys, index, heldRegistry: heldRegistry), new ErasureReporter(),
-        keys as IEnumerableInstanceKeyStore, time: null, heldRegistry: heldRegistry, requestRegistry: requestRegistry);
+        new TerminationCoordinator(keys, index, heldRegistry: heldRegistry, leases: leases), new ErasureReporter(),
+        keys as IEnumerableInstanceKeyStore, time: null, heldRegistry: heldRegistry, requestRegistry: requestRegistry,
+        leases: leases);
 }

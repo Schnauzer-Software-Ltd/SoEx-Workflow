@@ -76,6 +76,25 @@ string instanceId = "onb-" + Guid.NewGuid().ToString("N");
 byte[] seed = Native.SealSeed(step, instanceId, "invitee@example.com");
 ```
 
+### Declare a lease before a long wait
+
+If you wire a [lease registry](run-erasure-maintenance.md#give-each-instance-a-lease), each completed step
+renews the lease of its instance. A portable flow gets the lease from its wait. The framework cannot see
+the waits of a native flow. Thus a native step gets the `Idle` lease of the binding, unless it sets
+`StepContext.Lease`.
+
+Before your flow waits for longer than `Idle`, set `Lease` on the step that runs before the wait. Use the
+longest time that the wait can take, plus a margin.
+
+```csharp
+// the step before a wait of up to 90 days
+return step.ExecuteAsync<StepOutcome>(
+    new StepContext(id, seq, step.AmbientOf(id, seed)) { Lease = TimeSpan.FromDays(91) }, dto);
+```
+
+The next step that completes replaces this lease. If that step does not set `Lease`, the lease becomes
+`Idle` again.
+
 You must keep the result, the event names, and the timer names free of PII. Your flow design does this.
 PII that you must keep goes out through `OnRetaining`. In the examples, `IRetainedStore` is your own
 durable store.

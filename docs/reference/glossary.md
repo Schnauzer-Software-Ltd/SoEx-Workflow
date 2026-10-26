@@ -224,11 +224,16 @@ are a hard worker death at the time of termination and an admin terminate or pur
 
 **Abandoned-instance sweep** — `ErasureCoordinator.SweepAsync(olderThan, resolve)` is the backstop that
 needs no request. It lists the live (not shredded) keys through `IEnumerableInstanceKeyStore`. It
-force-terminates each instance whose key is older than `olderThan`. An abandoned instance thus gets a
-crypto-shred, also when its subject never sends an erasure request. `olderThan` must be longer than the
-longest valid flow duration. It is an age limit and does not check if the instance is live.
-`ErasureSweepLoop` runs the sweep at an interval. The framework does the shred. The consumer sets the
-interval.
+force-terminates each instance whose **instance lease** ended, and each instance with no lease whose key
+is older than `olderThan`. An abandoned instance thus gets a crypto-shred, also when its subject never
+sends an erasure request. For an instance with no lease, `olderThan` must be longer than the longest valid
+flow duration. It is an age limit and does not check if the instance is live. `ErasureSweepLoop` runs the
+sweep at an interval. The framework does the shred. The consumer sets the interval.
+
+**Instance lease** — the time until which an instance can stay idle before the abandoned-instance sweep
+shreds it. Each completed step renews it with the idle time that the step declares: a portable wait
+declares its timeout, and a native step declares `StepContext.Lease`. `IInstanceLeaseRegistry` holds the
+leases. The termination removes the lease of its instance.
 
 ## Runtimes and durability
 

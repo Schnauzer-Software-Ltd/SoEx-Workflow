@@ -22,6 +22,7 @@ operations:
 - It indexes the subject.
 - If you wire an idempotency store, it applies each step effect one time for each
   `(InstanceId, DtoType, Sequence)` triple. An at-least-once redelivery then has no second effect.
+- If you wire a lease registry, it renews the lease of the instance after the step completes.
 
 ```csharp
 public GovernedStep<I>(
@@ -31,7 +32,13 @@ public GovernedStep<I>(
     IInstanceKeyStore keys,
     ISubjectIndex index,
     string? operationName = null,
-    ISubjectMatcher? subjectMatcher = null) where I : class;
+    ISubjectMatcher? subjectMatcher = null,
+    bool clearJournalResult = false,
+    WorkflowMetrics? metrics = null,
+    IErasureTombstone? tombstone = null,
+    IInstanceLeaseRegistry? leases = null,
+    InstanceLeaseOptions? leaseOptions = null,
+    TimeProvider? time = null) where I : class;
 ```
 
 | Member | Description |
@@ -48,6 +55,10 @@ public GovernedStep<I>(
 `operationName` selects the step operation when the contract has more than one operation. For a contract
 with one operation, omit it. `subjectMatcher` replaces the default clear-text guard. See
 [Customize PII detection](../how-to/customize-pii-detection.md).
+
+`leases` and `leaseOptions` set the lease that each completed step gives its instance. `leaseOptions`
+defaults to `InstanceLeaseOptions.Default`: `Idle` is 1 day and `WaitMargin` is 1 hour. `time` is the clock
+for the lease. See [Give each instance a lease](../how-to/run-erasure-maintenance.md#give-each-instance-a-lease).
 
 A step operation has one or two parameters. The first parameter is the step DTO. The optional second
 parameter is the event data that a raise can carry. The framework makes the argument array, and it has
@@ -89,9 +100,10 @@ full list.
 `GovernedTermination` runs the termination lifecycle for erasure. The sequence is:
 
 1. `OnRetaining`.
-2. Destroy the key (crypto-shred).
-3. Prune the subject index.
-4. `OnTerminated`.
+2. Remove the lease of the instance, if you wired a lease registry.
+3. Destroy the key (crypto-shred).
+4. Prune the subject index.
+5. `OnTerminated`.
 
 If the extraction fails, the lifecycle goes to `OnRetentionHeld` after `OnRetaining`.
 
@@ -100,7 +112,10 @@ public GovernedTermination(
     IErasureEvent? contracts,
     IInstanceKeyStore keys,
     ISubjectIndex index,
-    IHeldInstanceRegistry? heldRegistry = null);
+    IHeldInstanceRegistry? heldRegistry = null,
+    WorkflowMetrics? metrics = null,
+    IErasureTombstone? tombstone = null,
+    IInstanceLeaseRegistry? leases = null);
 
 public Task<TerminationOutcome> TerminateAsync(string instanceId, IdempotencyKey idempotencyKey, TerminationTrigger trigger);
 ```
@@ -123,11 +138,18 @@ shows the client.
 `StepContext` gives the durable identity of the step to `ExecuteAsync`.
 
 ```csharp
-public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null);
+public readonly record struct StepContext(string InstanceId, long Sequence, byte[]? AmbientContext = null)
+{
+    public TimeSpan? Lease { get; init; }
+}
 ```
 
 `InstanceId` and `Sequence` come from the context of the runtime. `(InstanceId, Sequence)` is also part of
 the idempotency triple. Thus, a redelivered step applies its effect one time.
+
+`Lease` is the idle time that the instance gets after this step completes. If it is `null`, the step gets
+the `Idle` value of the binding. The framework uses it only when you wire a lease registry. It must be
+more than zero.
 
 ## `StepMetadata`
 
@@ -160,6 +182,7 @@ The wiring sequence has five parts. Do them in this order:
 IInstanceKeyStore keys  = new InMemoryInstanceKeyStore();
 ISubjectIndex     index = new InMemorySubjectIndex();
 IIdempotencyStore idem  = new InMemoryIdempotencyStore();
+IInstanceLeaseRegistry leases = new InMemoryInstanceLeaseRegistry();   // optional: share it with the sweep
 
 var listeners = new WorkflowListeners();
 var binding   = new WorkflowBinding<IOnboardManager>("onboarding");   // the governed steps arrive here
@@ -198,8 +221,9 @@ var serializer = host.Services.GetRequiredService<IMessageSerializer>();
 IErasureEvent erasureEvents = host.Services.GetRequiredService<IErasureEvent>();   // the SoEx client
 
 WorkflowRegistration.RequireErasureEvent(typeof(OnboardManager));
-var step        = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index);
-var termination = new GovernedTermination(erasureEvents, keys, index);
+var step        = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index,
+                                                    leases: leases);           // optional: instance leases
+var termination = new GovernedTermination(erasureEvents, keys, index, leases: leases);
 ```
 
 Resolve the endpoint only after `host.Start()`. The snippet is the full composition, and it includes the

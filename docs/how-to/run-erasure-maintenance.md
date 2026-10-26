@@ -42,7 +42,11 @@ backstop passes are for the instances that have no filed request.
 ## The sweep
 
 The sweep enumerates the live key set. The live key set holds the keys that the framework has not
-shredded. The sweep force-terminates each instance with a key older than `olderThan`.
+shredded. The sweep force-terminates each instance that has expired:
+
+- An instance with a [lease](#give-each-instance-a-lease) expires when its lease ends.
+- An instance with no lease expires when its key is older than `olderThan`.
+
 `ErasureSweepLoop` runs `ErasureCoordinator.SweepAsync` on a timer. Use it when you host the sweep
 without the built-in runner.
 
@@ -50,18 +54,67 @@ without the built-in runner.
 2. Call `RunAsync` with the interval and the cancellation token.
 
 ```csharp
-// sweep every hour, shredding anything abandoned for over a day
+// sweep every hour: expired leases, and unleased instances older than a day
 await new ErasureSweepLoop(coordinator, olderThan: TimeSpan.FromDays(1), resolve)
     .RunAsync(interval: TimeSpan.FromHours(1), cancellation: stoppingToken);
 ```
 
 > [!WARNING]
-> Set `olderThan` longer than your longest legitimate flow. `olderThan` is an age threshold only. The
-> sweep does not check if an instance is alive. Thus the sweep can terminate a running instance as an
-> abandoned instance.
+> For an instance with no lease, `olderThan` is an age threshold only. The sweep does not check if the
+> instance is alive. If an unleased flow runs longer than `olderThan`, the sweep terminates it as an
+> abandoned instance. Give your instances leases, or set `olderThan` longer than your longest flow.
 
 The sweep needs an `IEnumerableInstanceKeyStore`. The bundled in-memory, OpenBao, and RavenDB key stores
 all implement it. A key store that cannot enumerate its keys cannot support the sweep.
+
+### Give each instance a lease
+
+With one age threshold for all instances, a deployment that has short flows and long waits must set
+`olderThan` longer than the longest wait. An abandoned short flow then keeps its key for the same long
+time. A lease removes this problem. Each completed step renews the lease of its instance with the idle
+time that the step declares. A flow in a 90-day wait keeps a 90-day lease. An abandoned short flow
+expires after its short lease.
+
+1. Create one `IInstanceLeaseRegistry`. The step workers and the sweep must share it. Use the
+   `Leases` face of `ErasureStores` or `RavenErasureStores`, or `InMemoryInstanceLeaseRegistry` for a
+   single process.
+2. Give it to each `GovernedStep`, with the `InstanceLeaseOptions` of that binding.
+3. Give it to each `GovernedTermination`. The termination then removes the lease of the instance.
+4. Give it to the `ErasureCoordinator`, or to the `WorkflowUtility` that runs the sweep.
+
+```csharp
+IInstanceLeaseRegistry leases = stores.Leases;
+var options = new InstanceLeaseOptions { Idle = TimeSpan.FromHours(4), WaitMargin = TimeSpan.FromHours(1) };
+
+var step        = new GovernedStep<IOnboardManager>(endpoint, serializer, idem, keys, index,
+                                                    leases: leases, leaseOptions: options);
+var termination = new GovernedTermination(erasureEvents, keys, index, leases: leases);
+var utility     = new WorkflowUtility(seam, keys, index, heldRegistry: held, leases: leases);
+```
+
+The lease of a step:
+
+| The step | Lease |
+|---|---|
+| A portable step that returns `WaitForEvent` with a `Timeout` | The timeout plus `WaitMargin`. Never less than `Idle`. |
+| A portable step that returns `Delay` | The duration plus `WaitMargin`. Never less than `Idle`. |
+| A portable step that returns `WaitForEvent` with no timeout, `RaiseIntoNext`, or `Loop` | `Idle`. |
+| A portable step that returns `Complete` | No renewal. The termination removes the lease. |
+| A native step | `StepContext.Lease` if the flow sets it. Else `Idle`. |
+
+These rules apply:
+
+- The framework renews the lease only after a step completes. A step that fails and retries does not
+  keep its instance alive.
+- A renewal replaces the lease. Thus a lease can become shorter when a long wait ends.
+- The framework cannot see a native wait. Set `StepContext.Lease` on the step before a long native
+  wait. See [Author a native flow](author-a-native-flow.md#declare-a-lease-before-a-long-wait).
+- A portable wait with no timeout gets `Idle`. If a wait with no timeout can last longer than `Idle`,
+  give it a timeout, or set `Idle` longer than that wait.
+- An instance has no lease until its first step completes. Until then, the sweep uses `olderThan`.
+  Instances that started before you wired leases also use `olderThan` until their next step completes.
+- The sweep removes a lease that has no key. This occurs when a step completes while the framework
+  terminates its instance. `SweepReport.LeasesPruned` gives the count.
 
 ## Right-to-erasure: admit and drain
 
@@ -112,7 +165,7 @@ A runner with no dependencies runs the four passes, each on its own schedule. Th
 | Pass | Switch | Default interval |
 |---|---|---|
 | Drain | `Drain` | 1 minute (`DrainInterval`) |
-| Sweep abandoned | `Sweep` | 15 minutes (`SweepInterval`). `SweepOlderThan` is 1 day. |
+| Sweep abandoned | `Sweep` | 15 minutes (`SweepInterval`). `SweepOlderThan` is 1 day. It applies only to an instance with no lease. |
 | Re-drive held | `ReDriveHeld` | 5 minutes (`HeldReDriveInterval`) |
 | Review deadlines | `ReviewDeadlines` | 5 minutes (`DeadlineReviewInterval`). `EscalateWithin` is 1 day. |
 

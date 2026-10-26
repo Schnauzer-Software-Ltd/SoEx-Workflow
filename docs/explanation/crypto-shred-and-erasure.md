@@ -181,9 +181,10 @@ Two backstops close this gap:
 
 - A later erasure request for the subject re-drives each instance that is still in the index and not
   terminated. A filed request thus closes the gap when the data of the subject is erased.
-- A sweep checks the age of the live key set, independently of requests. It force-terminates each
-  instance that is older than a threshold. The sweep thus shreds an abandoned instance also when its
-  subject never files a request.
+- A sweep examines the live key set, independently of requests. It force-terminates each instance whose
+  lease ended. Each completed step renews the lease for the idle time that the step declares, so a long
+  wait keeps a long lease. An instance with no lease is terminated when it is older than a threshold. The
+  sweep thus shreds an abandoned instance also when its subject never files a request.
 
 [Run erasure maintenance](../how-to/run-erasure-maintenance.md) describes both backstops.
 

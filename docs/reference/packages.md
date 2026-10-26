@@ -108,6 +108,12 @@ Read these limits before you build a deployment on SoEx.Workflow. They are discl
   document with no `Kind` reads as a retention hold. On both stores, this includes the parks that an
   earlier version recorded, and the held re-drive shreds them. Before you upgrade, do the steps in
   [upgrade to a version that records the kind of hold](../how-to/operate-in-production.md#upgrade-to-a-version-that-records-the-kind-of-hold).
+
+  The instance-lease registry uses a `Leases` table (`InstanceId` key, `RenewedAt`, `ExpiresAt`). An
+  existing database made before this table does not have it, because `EnsureCreated` does not change an
+  existing database. Create the table before you wire the EF Core lease registry. On SQLite:
+  `CREATE TABLE Leases (InstanceId TEXT NOT NULL CONSTRAINT PK_Leases PRIMARY KEY, RenewedAt TEXT NOT NULL, ExpiresAt TEXT NOT NULL);`
+  The RavenDB lease registry needs no change.
 - **Durable Task uses a preview SDK, verified on the emulator only.** The Durable Task adapter pins
   `Microsoft.DurableTask.* 1.25.0-preview.1`. The tests run it against the DTS **emulator**. They do not
   run it against a real Azure Durable Task Scheduler. Here, "Durable Task works" means "the emulator

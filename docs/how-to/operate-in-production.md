@@ -81,8 +81,9 @@ kind of hold it is.
 4. For a `HeldKind.Parked`, the framework cannot resume the instance. When you have the data that you
    need from it, terminate it intentionally, for example with an erasure request. The termination runs
    the retention extraction and then shreds the instance. The held re-drive pass skips parked
-   instances. The abandoned-instance sweep terminates a parked instance when it is older than
-   `olderThan`.
+   instances. The abandoned-instance sweep terminates a parked instance when its lease ends, or, with no
+   lease, when it is older than `olderThan`. A failed step does not renew the lease, so the park keeps the
+   lease of the last step that completed.
 
 The same procedure repairs a crash between `Destroy` and the prune of the index. The termination runs
 again, finds that the key is already gone, and prunes the dangling edge again.
@@ -113,8 +114,8 @@ Do these steps:
 5. Set `ReDriveHeld` to `true` again, or start your scheduler's calls again. From this point, the re-drive shreds each remaining entry that has
    no kind.
 
-The abandoned-instance sweep does not use the kind. It terminates each instance that is older than
-`SweepOlderThan`, and this includes parked instances. If you must keep a parked instance during the
+The abandoned-instance sweep does not use the kind. It terminates each expired instance (its lease ended,
+or, with no lease, it is older than `SweepOlderThan`), and this includes parked instances. If you must keep a parked instance during the
 upgrade, make sure that the sweep does not reach it.
 
 Restate and Zeebe do not write a failed step to the held registry, so this procedure does not apply to
